@@ -17,11 +17,14 @@
 //   5. The Stop (■) button calls PythonRunnerService.cancelExecution().
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:archive/archive.dart';
+import '../../../projects/data/services/project_export_service.dart';
 import '../widgets/code_editor.dart';
 import '../widgets/custom_coding_keyboard.dart';
 import '../widgets/output_pane.dart';
@@ -424,6 +427,94 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   // ── Project Switcher ──────────────────────────────────────────────────────
+  Future<bool> _confirmDeleteProject(Project p) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF2A2D35),
+          title: const Text('Delete Project', style: TextStyle(color: Colors.white)),
+          content: Text('Are you sure you want to delete "${p.title}"? This cannot be undone.', style: const TextStyle(color: Colors.white70)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete', style: TextStyle(color: Colors.redAccent)),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
+  }
+
+  Future<void> _renameProject(Project p, List<Project> projects, StateSetter setSheetState) async {
+    final controller = TextEditingController(text: p.title);
+    final formKey = GlobalKey<FormState>();
+
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF2A2D35),
+          title: const Text('Rename Project', style: TextStyle(color: Colors.white)),
+          content: Form(
+            key: formKey,
+            child: TextFormField(
+              controller: controller,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Project Name',
+                labelStyle: TextStyle(color: Colors.grey),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00E5FF))),
+              ),
+              validator: (val) {
+                if (val == null || val.trim().isEmpty) return 'Name cannot be empty';
+                final name = val.trim();
+                if (name == p.title) return null; // No change
+                if (projects.any((proj) => proj.title.toLowerCase() == name.toLowerCase())) {
+                  return 'A project with this name already exists';
+                }
+                return null;
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            TextButton(
+              onPressed: () {
+                if (formKey.currentState!.validate()) {
+                  Navigator.pop(context, controller.text.trim());
+                }
+              },
+              child: const Text('Rename', style: TextStyle(color: Color(0xFF00E5FF))),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (newName != null && newName != p.title) {
+      final updatedProject = p.copyWith(title: newName);
+      await _projectRepo.updateProject(updatedProject);
+      if (_activeProject?.id == p.id) {
+        setState(() {
+          _activeProject = updatedProject;
+        });
+      }
+      setSheetState(() {
+        projects[projects.indexWhere((proj) => proj.id == p.id)] = updatedProject;
+      });
+    }
+  }
+
   Future<void> _showProjectSwitcher() async {
     final projects = await _projectRepo.getProjects();
     
@@ -465,6 +556,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
                             value: 'import_py',
                             child: Text('Import Python File', style: TextStyle(color: Colors.white)),
                           ),
+                          const PopupMenuItem(
+                            value: 'import_web_zip',
+                            child: Text('Import Web ZIP', style: TextStyle(color: Colors.white)),
+                          ),
                         ],
                         onSelected: (value) async {
                           if (value == 'new') {
@@ -482,6 +577,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
                             );
                           } else if (value == 'import_py') {
                             await _importPythonFile(projects);
+                          } else if (value == 'import_web_zip') {
+                            await _importWebZipFile(projects);
                           }
                         },
                       ),
@@ -507,23 +604,61 @@ class _WorkspacePageState extends State<WorkspacePage> {
                             fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
                           ),
                         ),
-                        subtitle: Text(
-                          "Last opened: ${DateTime.fromMillisecondsSinceEpoch(p.lastOpenedAt).toString().split('.').first}",
-                          style: const TextStyle(color: Colors.grey, fontSize: 12),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              p.projectType == ProjectType.python ? "Python Project" : "Web Project",
+                              style: const TextStyle(color: Colors.white54, fontSize: 13),
+                            ),
+                            Text(
+                              "Last opened: ${DateTime.fromMillisecondsSinceEpoch(p.lastOpenedAt).toString().split('.').first}",
+                              style: const TextStyle(color: Colors.grey, fontSize: 12),
+                            ),
+                          ],
                         ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                          onPressed: () async {
-                            if (projects.length <= 1) return; // Don't delete last project
+                        trailing: PopupMenuButton<String>(
+                          icon: const Icon(Icons.more_vert, color: Colors.grey),
+                          color: const Color(0xFF2A2D35),
+                          itemBuilder: (context) => [
+                            const PopupMenuItem(
+                              value: 'rename',
+                              child: Text('Rename', style: TextStyle(color: Colors.white)),
+                            ),
+                            const PopupMenuItem(
+                              value: 'export',
+                              child: Text('Export', style: TextStyle(color: Colors.white)),
+                            ),
+                            if (projects.length > 1)
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Text('Delete', style: TextStyle(color: Colors.redAccent)),
+                              ),
+                          ],
+                          onSelected: (value) async {
                             final nav = Navigator.of(context);
-                            await _projectRepo.deleteProject(p.id);
-                            if (isActive) {
-                              nav.pop();
-                              _loadSession(); // Load another project
-                            } else {
-                              setSheetState(() {
-                                projects.removeAt(index);
-                              });
+                            final messenger = ScaffoldMessenger.of(context);
+                            
+                            if (value == 'rename') {
+                              await _renameProject(p, projects, setSheetState);
+                            } else if (value == 'export') {
+                              final path = await ProjectExportService().exportProjectAsZip(p);
+                              if (path == null) return;
+                              messenger.showSnackBar(
+                                SnackBar(content: Text('Exported to: $path')),
+                              );
+                            } else if (value == 'delete') {
+                               final confirm = await _confirmDeleteProject(p);
+                               if (!confirm) return;
+                               await _projectRepo.deleteProject(p.id);
+                               if (isActive) {
+                                 nav.pop();
+                                 _loadSession(); // Load another project
+                               } else {
+                                 setSheetState(() {
+                                   projects.removeAt(index);
+                                 });
+                               }
                             }
                           },
                         ),
@@ -603,6 +738,89 @@ class _WorkspacePageState extends State<WorkspacePage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to read file: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _importWebZipFile(List<Project> projects) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['zip'],
+        allowMultiple: false,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        final pickedFile = result.files.single;
+
+        if (pickedFile.path == null || pickedFile.path!.isEmpty) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid file path.')));
+          return;
+        }
+
+        final bytes = await File(pickedFile.path!).readAsBytes();
+        final archive = ZipDecoder().decodeBytes(bytes);
+
+        ArchiveFile? indexHtmlFile;
+        String prefix = '';
+
+        for (final file in archive) {
+          if (file.isFile && file.name.endsWith('index.html')) {
+            indexHtmlFile = file;
+            prefix = file.name.substring(0, file.name.length - 'index.html'.length);
+            break;
+          }
+        }
+
+        if (indexHtmlFile == null) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No index.html found in the ZIP.')));
+          return;
+        }
+
+        final String htmlContent = utf8.decode(indexHtmlFile.content as List<int>);
+        String cssContent = '';
+        String jsContent = '';
+
+        for (final file in archive) {
+          if (file.isFile) {
+            if (file.name == '${prefix}style.css') {
+              cssContent = utf8.decode(file.content as List<int>);
+            } else if (file.name == '${prefix}script.js') {
+              jsContent = utf8.decode(file.content as List<int>);
+            }
+          }
+        }
+
+        final filename = pickedFile.name;
+        String defaultName = filename;
+        if (defaultName.toLowerCase().endsWith('.zip')) {
+          defaultName = defaultName.substring(0, defaultName.length - 4);
+        }
+
+        if (mounted) {
+          final nav = Navigator.of(context);
+          await showDialog(
+            context: context,
+            builder: (context) => _CreateProjectDialog(
+              existingProjects: projects,
+              initialName: defaultName,
+              importedHtmlContent: htmlContent,
+              importedCssContent: cssContent,
+              importedJsContent: jsContent,
+              onProjectCreated: (p) {
+                nav.pop(); // pop dialog
+                nav.pop(); // pop bottom sheet
+                _openProject(p);
+              },
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to read ZIP file: $e')),
         );
       }
     }
@@ -853,12 +1071,18 @@ class _CreateProjectDialog extends StatefulWidget {
   final Function(Project) onProjectCreated;
   final String? initialName;
   final String? importedPythonContent;
+  final String? importedHtmlContent;
+  final String? importedCssContent;
+  final String? importedJsContent;
 
   const _CreateProjectDialog({
     required this.existingProjects,
     required this.onProjectCreated,
     this.initialName,
     this.importedPythonContent,
+    this.importedHtmlContent,
+    this.importedCssContent,
+    this.importedJsContent,
   });
 
   @override
@@ -879,6 +1103,8 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
     }
     if (widget.importedPythonContent != null) {
       _selectedType = ProjectType.python;
+    } else if (widget.importedHtmlContent != null) {
+      _selectedType = ProjectType.web;
     }
   }
 
@@ -914,9 +1140,9 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
       newProject = await _projectRepo.createProject(
         title: name,
         projectType: ProjectType.web,
-        htmlContent: '<!DOCTYPE html>\n<html>\n<head>\n  <title>My Web Project</title>\n</head>\n<body>\n  <h1>Hello World</h1>\n  <p>Edit the HTML, CSS, and JavaScript tabs, then press Run.</p>\n</body>\n</html>',
-        cssContent: 'body {\n  font-family: sans-serif;\n  padding: 20px;\n}',
-        jsContent: 'console.log("Hello from JavaScript!");',
+        htmlContent: widget.importedHtmlContent ?? '<!DOCTYPE html>\n<html>\n<head>\n  <title>My Web Project</title>\n</head>\n<body>\n  <h1>Hello World</h1>\n  <p>Edit the HTML, CSS, and JavaScript tabs, then press Run.</p>\n</body>\n</html>',
+        cssContent: widget.importedCssContent ?? 'body {\n  font-family: sans-serif;\n  padding: 20px;\n}',
+        jsContent: widget.importedJsContent ?? 'console.log("Hello from JavaScript!");',
       );
     }
 
@@ -943,7 +1169,7 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
               focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00E5FF))),
             ),
           ),
-          if (widget.importedPythonContent == null) ...[
+          if (widget.importedPythonContent == null && widget.importedHtmlContent == null) ...[
             const SizedBox(height: 24),
             const Text('Project Type', style: TextStyle(color: Colors.grey, fontSize: 12)),
             const SizedBox(height: 8),
