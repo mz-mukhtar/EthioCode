@@ -73,10 +73,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // ── Initialise Chaquopy once before any Python call ──────────────────
-        if (!Python.isStarted()) {
-            Python.start(AndroidPlatform(this))
-        }
+        // ── Chaquopy initialisation is deferred to executePythonSafely ────────
 
         // ── Register Python MethodChannel ────────────────────────────────────
         MethodChannel(
@@ -133,6 +130,10 @@ class MainActivity : FlutterActivity() {
     // ────────────────────────────────────────────────────────────────────────
     private fun executePythonSafely(code: String, result: MethodChannel.Result) {
         try {
+            // Deferred initialisation: only start Python when the user first runs code.
+            if (!Python.isStarted()) {
+                Python.start(AndroidPlatform(applicationContext))
+            }
             val py = Python.getInstance()
 
             // runner.py is bundled inside the APK by Chaquopy.

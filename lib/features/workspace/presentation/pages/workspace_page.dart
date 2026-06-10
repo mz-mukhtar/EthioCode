@@ -17,13 +17,17 @@
 //   5. The Stop (■) button calls PythonRunnerService.cancelExecution().
 
 import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import '../widgets/code_editor.dart';
 import '../widgets/custom_coding_keyboard.dart';
 import '../widgets/output_pane.dart';
 import '../widgets/syntax_highlighter.dart';
 import '../../domain/services/python_runner_service.dart';
+import '../../domain/services/web_project_builder_service.dart';
 import '../../../settings/presentation/pages/settings_page.dart';
 import '../../../projects/domain/models/project.dart';
 import '../../../projects/domain/models/project_type.dart';
@@ -63,6 +67,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   Project? _activeProject;
   Timer? _autosaveTimer;
   bool _isLoading = true;
+  String? _startupError;
   String _activeWebTab = 'html';
 
   // ── Split-view ────────────────────────────────────────────────────────────
@@ -76,23 +81,42 @@ class _WorkspacePageState extends State<WorkspacePage> {
   final ValueNotifier<OutputPaneState> _outputState =
       ValueNotifier<OutputPaneState>(const OutputPaneState());
 
-  // ── Language detection ────────────────────────────────────────────────────
-  /// True when the editor content looks like HTML.
-  bool get _isHtml {
-    final text = _controller.text.trimLeft();
-    return text.startsWith('<!') ||
-        text.toLowerCase().startsWith('<html') ||
-        text.toLowerCase().startsWith('<head') ||
-        text.toLowerCase().startsWith('<body');
-  }
+
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
-    
+    debugPrint("APP_START: WorkspacePage initState");
     _controller.addListener(_onTextChanged);
-    _loadSession();
+    _initializeStartupFlow();
+  }
+
+  Future<void> _initializeStartupFlow() async {
+    try {
+      debugPrint("APP_START: before database open");
+      // Prime the database connection
+      await DatabaseHelper.instance.database.timeout(const Duration(seconds: 10));
+      debugPrint("APP_START: after database open");
+      
+      debugPrint("APP_START: before session recovery");
+      await _loadSession().timeout(const Duration(seconds: 10));
+      debugPrint("APP_START: after session recovery");
+    } catch (e, st) {
+      debugPrint("APP_START: startup failed! $e");
+      debugPrint(st.toString());
+      if (mounted) {
+        setState(() {
+          _startupError = e.toString();
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadSession() async {
@@ -214,13 +238,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // Unfocus so the keyboard doesn't interfere with the scrollable output.
     _focusNode.unfocus();
 
-    final code = _controller.text;
-    if (code.trim().isEmpty) return;
+    // Save project and capture snapshot BEFORE execution
+    await _saveCodeToDb();
 
-    if (_isHtml) {
-      // HTML mode: send directly to the WebView preview.
+    if (_activeProject?.projectType == ProjectType.web) {
+      final generatedHtml = WebProjectBuilderService().build(_activeProject!);
+      
       _outputState.value = OutputPaneState(
-        htmlSource: code,
+        htmlSource: generatedHtml,
         activeTab:  OutputTab.preview,
         isRunning:  false,
       );
@@ -228,14 +253,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
     }
 
     // Python mode.
+    final code = _controller.text;
+    if (code.trim().isEmpty) return;
+
     _outputState.value = _outputState.value.copyWith(
       isRunning: true,
       result:    null,
       activeTab: OutputTab.output,
     );
 
-    // Save project and capture snapshot BEFORE execution
-    await _saveCodeToDb();
     if (_activeProject != null) {
       await _snapshotRepo.insertSnapshot(
         projectId: _activeProject!.id,
@@ -279,6 +305,56 @@ class _WorkspacePageState extends State<WorkspacePage> {
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: Color(0xFF00E5FF)),
+              SizedBox(height: 16),
+              Text('Loading workspace...', style: TextStyle(color: Colors.white70)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_startupError != null) {
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
+                const SizedBox(height: 16),
+                const Text('Startup Error', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+                const SizedBox(height: 8),
+                Text(_startupError!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)),
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      _isLoading = true;
+                      _startupError = null;
+                    });
+                    _initializeStartupFlow();
+                  },
+                  child: const Text('Retry'),
+                )
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_activeProject == null) {
+      return const Scaffold(backgroundColor: Color(0xFF0D1117));
+    }
+
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
       statusBarColor:          Colors.transparent,
       statusBarIconBrightness: Brightness.light,
@@ -377,21 +453,36 @@ class _WorkspacePageState extends State<WorkspacePage> {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      IconButton(
+                      PopupMenuButton<String>(
                         icon: const Icon(Icons.add, color: Color(0xFF00E5FF)),
-                        onPressed: () async {
-                          final nav = Navigator.of(context);
-                          await showDialog(
-                            context: context,
-                            builder: (context) => _CreateProjectDialog(
-                              existingProjects: projects,
-                              onProjectCreated: (p) {
-                                nav.pop(); // pop dialog
-                                nav.pop(); // pop bottom sheet
-                                _openProject(p);
-                              },
-                            ),
-                          );
+                        color: const Color(0xFF2A2D35),
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(
+                            value: 'new',
+                            child: Text('New Project', style: TextStyle(color: Colors.white)),
+                          ),
+                          const PopupMenuItem(
+                            value: 'import_py',
+                            child: Text('Import Python File', style: TextStyle(color: Colors.white)),
+                          ),
+                        ],
+                        onSelected: (value) async {
+                          if (value == 'new') {
+                            final nav = Navigator.of(context);
+                            await showDialog(
+                              context: context,
+                              builder: (context) => _CreateProjectDialog(
+                                existingProjects: projects,
+                                onProjectCreated: (p) {
+                                  nav.pop(); // pop dialog
+                                  nav.pop(); // pop bottom sheet
+                                  _openProject(p);
+                                },
+                              ),
+                            );
+                          } else if (value == 'import_py') {
+                            await _importPythonFile(projects);
+                          }
                         },
                       ),
                     ],
@@ -416,9 +507,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
                             fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
                           ),
                         ),
-                        subtitle: const Text(
-                          "Last opened: \${DateTime.fromMillisecondsSinceEpoch(p.lastOpenedAt).toString().split('.').first}",
-                          style: TextStyle(color: Colors.grey, fontSize: 12),
+                        subtitle: Text(
+                          "Last opened: ${DateTime.fromMillisecondsSinceEpoch(p.lastOpenedAt).toString().split('.').first}",
+                          style: const TextStyle(color: Colors.grey, fontSize: 12),
                         ),
                         trailing: IconButton(
                           icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
@@ -450,6 +541,71 @@ class _WorkspacePageState extends State<WorkspacePage> {
         );
       },
     );
+  }
+
+  Future<void> _importPythonFile(List<Project> projects) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['py'],
+        allowMultiple: false,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.single;
+
+        if (file.path == null || file.path!.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Invalid file path.')),
+            );
+          }
+          return;
+        }
+
+        if (!file.name.toLowerCase().endsWith('.py')) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Only .py files are supported.')),
+            );
+          }
+          return;
+        }
+
+        final path = file.path!;
+        final fileObj = File(path);
+        final content = await fileObj.readAsString();
+        
+        final filename = file.name;
+        String defaultName = filename;
+        if (defaultName.toLowerCase().endsWith('.py')) {
+          defaultName = defaultName.substring(0, defaultName.length - 3);
+        }
+
+        if (mounted) {
+          final nav = Navigator.of(context);
+          await showDialog(
+            context: context,
+            builder: (context) => _CreateProjectDialog(
+              existingProjects: projects,
+              initialName: defaultName,
+              importedPythonContent: content,
+              onProjectCreated: (p) {
+                nav.pop(); // pop dialog
+                nav.pop(); // pop bottom sheet
+                _openProject(p);
+              },
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to read file: $e')),
+        );
+      }
+    }
   }
 
   // ── AppBar ────────────────────────────────────────────────────────────────
@@ -695,10 +851,14 @@ if __name__ == "__main__":
 class _CreateProjectDialog extends StatefulWidget {
   final List<Project> existingProjects;
   final Function(Project) onProjectCreated;
+  final String? initialName;
+  final String? importedPythonContent;
 
   const _CreateProjectDialog({
     required this.existingProjects,
     required this.onProjectCreated,
+    this.initialName,
+    this.importedPythonContent,
   });
 
   @override
@@ -710,6 +870,17 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
   ProjectType _selectedType = ProjectType.python;
   String? _errorMessage;
   final ProjectRepository _projectRepo = ProjectRepository();
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialName != null) {
+      _nameController.text = widget.initialName!;
+    }
+    if (widget.importedPythonContent != null) {
+      _selectedType = ProjectType.python;
+    }
+  }
 
   @override
   void dispose() {
@@ -737,14 +908,14 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
       newProject = await _projectRepo.createProject(
         title: name,
         projectType: ProjectType.python,
-        pythonContent: 'print("Hello, World!")',
+        pythonContent: widget.importedPythonContent ?? 'print("Hello, World!")',
       );
     } else {
       newProject = await _projectRepo.createProject(
         title: name,
         projectType: ProjectType.web,
-        htmlContent: '<!DOCTYPE html>\\n<html>\\n<head>\\n  <title>My Web Project</title>\\n</head>\\n<body>\\n  <h1>Hello World</h1>\\n  <p>Edit the HTML, CSS, and JavaScript tabs, then press Run.</p>\\n</body>\\n</html>',
-        cssContent: 'body {\\n  font-family: sans-serif;\\n  padding: 20px;\\n}',
+        htmlContent: '<!DOCTYPE html>\n<html>\n<head>\n  <title>My Web Project</title>\n</head>\n<body>\n  <h1>Hello World</h1>\n  <p>Edit the HTML, CSS, and JavaScript tabs, then press Run.</p>\n</body>\n</html>',
+        cssContent: 'body {\n  font-family: sans-serif;\n  padding: 20px;\n}',
         jsContent: 'console.log("Hello from JavaScript!");',
       );
     }
@@ -772,34 +943,36 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
               focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00E5FF))),
             ),
           ),
-          const SizedBox(height: 24),
-          const Text('Project Type', style: TextStyle(color: Colors.grey, fontSize: 12)),
-          const SizedBox(height: 8),
-          SegmentedButton<ProjectType>(
-            segments: const [
-              ButtonSegment<ProjectType>(
-                value: ProjectType.python,
-                label: Text('Python'),
-                icon: Icon(Icons.code),
+          if (widget.importedPythonContent == null) ...[
+            const SizedBox(height: 24),
+            const Text('Project Type', style: TextStyle(color: Colors.grey, fontSize: 12)),
+            const SizedBox(height: 8),
+            SegmentedButton<ProjectType>(
+              segments: const [
+                ButtonSegment<ProjectType>(
+                  value: ProjectType.python,
+                  label: Text('Python'),
+                  icon: Icon(Icons.code),
+                ),
+                ButtonSegment<ProjectType>(
+                  value: ProjectType.web,
+                  label: Text('Web'),
+                  icon: Icon(Icons.language),
+                ),
+              ],
+              selected: <ProjectType>{_selectedType},
+              onSelectionChanged: (Set<ProjectType> newSelection) {
+                setState(() {
+                  _selectedType = newSelection.first;
+                });
+              },
+              style: SegmentedButton.styleFrom(
+                selectedBackgroundColor: const Color(0xFF00E5FF).withAlpha(40),
+                selectedForegroundColor: const Color(0xFF00E5FF),
+                foregroundColor: Colors.grey,
               ),
-              ButtonSegment<ProjectType>(
-                value: ProjectType.web,
-                label: Text('Web'),
-                icon: Icon(Icons.language),
-              ),
-            ],
-            selected: <ProjectType>{_selectedType},
-            onSelectionChanged: (Set<ProjectType> newSelection) {
-              setState(() {
-                _selectedType = newSelection.first;
-              });
-            },
-            style: SegmentedButton.styleFrom(
-              selectedBackgroundColor: const Color(0xFF00E5FF).withAlpha(40),
-              selectedForegroundColor: const Color(0xFF00E5FF),
-              foregroundColor: Colors.grey,
             ),
-          ),
+          ],
         ],
       ),
       actions: [

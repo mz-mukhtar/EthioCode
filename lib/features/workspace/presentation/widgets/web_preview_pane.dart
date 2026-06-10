@@ -40,10 +40,14 @@ class WebPreviewPane extends StatefulWidget {
   /// Optional controller so the parent widget can trigger reloads.
   final WebPreviewPaneController? controller;
 
+  /// Callback for JavaScript console messages.
+  final void Function(String message, bool isError)? onConsoleMessage;
+
   const WebPreviewPane({
     super.key,
     required this.htmlSource,
     this.controller,
+    this.onConsoleMessage,
   });
 
   @override
@@ -94,6 +98,16 @@ class _WebPreviewPaneState extends State<WebPreviewPane> {
     _webController = WebViewController()
       // ── JavaScript: unrestricted (required for student JS exercises) ──────
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      // ── Console Output Channel ─────────────────────────────────────────────
+      ..addJavaScriptChannel(
+        'EthioCodeConsole',
+        onMessageReceived: (JavaScriptMessage message) {
+          final text = message.message;
+          final isError = text.startsWith('ERROR: ');
+          final msg = text.replaceFirst(RegExp(r'^(LOG|ERROR):\s*'), '');
+          widget.onConsoleMessage?.call(msg, isError);
+        },
+      )
       // ── Background colour matches the IDE dark theme ──────────────────────
       ..setBackgroundColor(_kPaneBg)
       // ── Navigation delegate: block all non-data-URI navigations ──────────

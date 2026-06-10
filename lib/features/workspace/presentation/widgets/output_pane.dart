@@ -125,6 +125,33 @@ class _OutputPaneState extends State<OutputPane> {
         return WebPreviewPane(
           htmlSource: state.htmlSource,
           controller: _previewCtrl,
+          onConsoleMessage: (msg, isError) {
+            // Because the stateNotifier can trigger a rebuild, defer state mutation.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final currentResult = widget.stateNotifier.value.result ??
+                  const ExecutionResult(stdout: '', stderr: '', hasError: false);
+              
+              if (isError) {
+                final newStderr = currentResult.stderr.isEmpty ? msg : '\${currentResult.stderr}\\n$msg';
+                widget.stateNotifier.value = widget.stateNotifier.value.copyWith(
+                  result: ExecutionResult(
+                    stdout: currentResult.stdout,
+                    stderr: newStderr,
+                    hasError: true,
+                  ),
+                );
+              } else {
+                final newStdout = currentResult.stdout.isEmpty ? msg : '\${currentResult.stdout}\\n$msg';
+                widget.stateNotifier.value = widget.stateNotifier.value.copyWith(
+                  result: ExecutionResult(
+                    stdout: newStdout,
+                    stderr: currentResult.stderr,
+                    hasError: currentResult.hasError,
+                  ),
+                );
+              }
+            });
+          },
         );
     }
   }

@@ -148,10 +148,6 @@ class DatabaseHelper {
   Future<void> _onConfigure(Database db) async {
     
     await db.execute('PRAGMA foreign_keys = ON;');
-    // WAL journal mode: better concurrent-read performance on Android.
-    await db.execute('PRAGMA journal_mode = WAL;');
-    // Synchronous NORMAL: safe on Android with WAL enabled.
-    await db.execute('PRAGMA synchronous = NORMAL;');
   }
 
   // ── Schema creation (version 1) ───────────────────────────────────────────
@@ -245,24 +241,32 @@ class DatabaseHelper {
   // Example: upgrading from v1 → v3 runs cases 1, 2, and (falls through to)
   // the default which exits.  Add new cases as the schema evolves.
 
-  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+  Future<bool> _columnExists(Database db, String table, String column) async {
+    final info = await db.rawQuery('PRAGMA table_info($table)');
+    for (final row in info) {
+      if (row['name'] == column) return true;
+    }
+    return false;
+  }
+
+Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     
     try {
       // ignore: unused_local_variable — the loop variable `v` drives ordering
       for (int v = oldVersion; v < newVersion; v++) {
         switch (v) {
           case 1:
-            // v1 → v2: Add current_code, updated_at, last_opened_at to projects
-            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projCurrentCode} TEXT NOT NULL DEFAULT \'\'');
-            
-            // For existing rows, default updated_at and last_opened_at to their created_at time
-            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projUpdatedAt} INTEGER NOT NULL DEFAULT 0');
-            await db.execute('UPDATE ${DbSchema.tableProjects} SET ${DbSchema.projUpdatedAt} = ${DbSchema.projCreatedAt}');
-            
-            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projLastOpenedAt} INTEGER NOT NULL DEFAULT 0');
-            await db.execute('UPDATE ${DbSchema.tableProjects} SET ${DbSchema.projLastOpenedAt} = ${DbSchema.projCreatedAt}');
-
-            // Create new session_state table
+            if (!await _columnExists(db, DbSchema.tableProjects, DbSchema.projCurrentCode)) {
+              await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projCurrentCode} TEXT NOT NULL DEFAULT \'\'');
+            }
+            if (!await _columnExists(db, DbSchema.tableProjects, DbSchema.projUpdatedAt)) {
+              await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projUpdatedAt} INTEGER NOT NULL DEFAULT 0');
+              await db.execute('UPDATE ${DbSchema.tableProjects} SET ${DbSchema.projUpdatedAt} = ${DbSchema.projCreatedAt}');
+            }
+            if (!await _columnExists(db, DbSchema.tableProjects, DbSchema.projLastOpenedAt)) {
+              await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projLastOpenedAt} INTEGER NOT NULL DEFAULT 0');
+              await db.execute('UPDATE ${DbSchema.tableProjects} SET ${DbSchema.projLastOpenedAt} = ${DbSchema.projCreatedAt}');
+            }
             await db.execute('''
               CREATE TABLE IF NOT EXISTS ${DbSchema.tableSessionState} (
                 ${DbSchema.sessionKey}   TEXT PRIMARY KEY,
@@ -271,15 +275,22 @@ class DatabaseHelper {
             ''');
             break;
           case 2:
-            // v2 → v3: Add project_type, python_content, html_content, css_content, js_content
-            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projType} TEXT NOT NULL DEFAULT \'python\'');
-            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projPythonContent} TEXT NOT NULL DEFAULT \'\'');
-            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projHtmlContent} TEXT NOT NULL DEFAULT \'\'');
-            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projCssContent} TEXT NOT NULL DEFAULT \'\'');
-            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projJsContent} TEXT NOT NULL DEFAULT \'\'');
-
-            // Migrate data
-            await db.execute('UPDATE ${DbSchema.tableProjects} SET ${DbSchema.projPythonContent} = ${DbSchema.projCurrentCode}');
+            if (!await _columnExists(db, DbSchema.tableProjects, DbSchema.projType)) {
+              await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projType} TEXT NOT NULL DEFAULT \'python\'');
+            }
+            if (!await _columnExists(db, DbSchema.tableProjects, DbSchema.projPythonContent)) {
+              await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projPythonContent} TEXT NOT NULL DEFAULT \'\'');
+              await db.execute('UPDATE ${DbSchema.tableProjects} SET ${DbSchema.projPythonContent} = ${DbSchema.projCurrentCode}');
+            }
+            if (!await _columnExists(db, DbSchema.tableProjects, DbSchema.projHtmlContent)) {
+              await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projHtmlContent} TEXT NOT NULL DEFAULT \'\'');
+            }
+            if (!await _columnExists(db, DbSchema.tableProjects, DbSchema.projCssContent)) {
+              await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projCssContent} TEXT NOT NULL DEFAULT \'\'');
+            }
+            if (!await _columnExists(db, DbSchema.tableProjects, DbSchema.projJsContent)) {
+              await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projJsContent} TEXT NOT NULL DEFAULT \'\'');
+            }
             break;
           // Add `case 3:`, `case 4:` etc. as the schema grows.
         }
