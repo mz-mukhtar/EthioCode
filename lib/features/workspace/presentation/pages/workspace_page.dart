@@ -244,6 +244,24 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // Save project and capture snapshot BEFORE execution
     await _saveCodeToDb();
 
+    if (_activeProject != null) {
+      String snapshotContent = '';
+      if (_activeProject!.projectType == ProjectType.web) {
+        snapshotContent = jsonEncode({
+          'html': _activeProject!.htmlContent,
+          'css': _activeProject!.cssContent,
+          'js': _activeProject!.jsContent,
+        });
+      } else {
+        snapshotContent = _activeProject!.pythonContent;
+      }
+      
+      await _snapshotRepo.insertSnapshot(
+        projectId: _activeProject!.id,
+        codeContent: snapshotContent,
+      );
+    }
+
     if (_activeProject?.projectType == ProjectType.web) {
       final generatedHtml = WebProjectBuilderService().build(_activeProject!);
       
@@ -264,13 +282,6 @@ class _WorkspacePageState extends State<WorkspacePage> {
       result:    null,
       activeTab: OutputTab.output,
     );
-
-    if (_activeProject != null) {
-      await _snapshotRepo.insertSnapshot(
-        projectId: _activeProject!.id,
-        codeContent: code,
-      );
-    }
 
     final result = await _pythonRunner.run(code: code);
 
