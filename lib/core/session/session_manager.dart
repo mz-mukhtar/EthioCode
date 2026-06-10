@@ -12,6 +12,7 @@ class SessionManager {
   static const String _keyLastProjectId = 'last_project_id';
   static const String _keyLastCursorPos = 'last_cursor_position';
   static const String _keyLastOpenedAt  = 'last_opened_timestamp';
+  static const String _keyLastWebTab    = 'last_web_tab';
 
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
 
@@ -79,5 +80,15 @@ class SessionManager {
   /// Save the current timestamp.
   Future<void> setLastOpenedTimestamp(int ms) async {
     await _setInt(_keyLastOpenedAt, ms);
+  }
+
+  /// The last active web tab (html, css, js).
+  Future<String> getLastWebTab() async {
+    return (await _getString(_keyLastWebTab)) ?? 'html';
+  }
+
+  /// Save the last active web tab.
+  Future<void> setLastWebTab(String tab) async {
+    await _setString(_keyLastWebTab, tab);
   }
 }

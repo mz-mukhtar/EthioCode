@@ -63,6 +63,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   Project? _activeProject;
   Timer? _autosaveTimer;
   bool _isLoading = true;
+  String _activeWebTab = 'html';
 
   // ── Split-view ────────────────────────────────────────────────────────────
   final ValueNotifier<double> _splitRatio =
@@ -109,7 +110,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       pythonContent: _kWelcomeSnippet,
     );
 
-    
+    _activeWebTab = await _sessionManager.getLastWebTab();
     await _openProject(p);
   }
 
@@ -124,7 +125,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
     await _projectRepo.updateProject(project);
     await _sessionManager.setLastProjectId(project.id);
     
-    _controller.text = project.pythonContent;
+    if (project.projectType == ProjectType.web) {
+      if (_activeWebTab == 'html') {
+        _controller.text = project.htmlContent;
+      } else if (_activeWebTab == 'css') {
+        _controller.text = project.cssContent;
+      } else {
+        _controller.text = project.jsContent;
+      }
+    } else {
+      _controller.text = project.pythonContent;
+    }
 
     // Restore cursor position if this was the last active project
     final lastCursor = await _sessionManager.getLastCursorPosition();
@@ -152,12 +163,27 @@ class _WorkspacePageState extends State<WorkspacePage> {
     if (_activeProject == null) return;
     
     final newCode = _controller.text;
-    if (_activeProject!.pythonContent == newCode) return; // No change
+    Project updated;
+    
+    if (_activeProject!.projectType == ProjectType.web) {
+      if (_activeWebTab == 'html' && _activeProject!.htmlContent == newCode) return;
+      if (_activeWebTab == 'css' && _activeProject!.cssContent == newCode) return;
+      if (_activeWebTab == 'js' && _activeProject!.jsContent == newCode) return;
 
-    final updated = _activeProject!.copyWith(
-      pythonContent: newCode,
-      updatedAt: DatabaseHelper.nowMs(),
-    );
+      updated = _activeProject!.copyWith(
+        htmlContent: _activeWebTab == 'html' ? newCode : null,
+        cssContent: _activeWebTab == 'css' ? newCode : null,
+        jsContent: _activeWebTab == 'js' ? newCode : null,
+        updatedAt: DatabaseHelper.nowMs(),
+      );
+    } else {
+      if (_activeProject!.pythonContent == newCode) return; // No change
+      updated = _activeProject!.copyWith(
+        pythonContent: newCode,
+        updatedAt: DatabaseHelper.nowMs(),
+      );
+    }
+
     _activeProject = updated;
     await _projectRepo.updateProject(updated);
     
@@ -282,9 +308,18 @@ class _WorkspacePageState extends State<WorkspacePage> {
                       children: [
                         SizedBox(
                           height: editorH,
-                          child: CodeEditor(
-                            controller: _controller,
-                            focusNode:  _focusNode,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (_activeProject?.projectType == ProjectType.web)
+                                _buildWebTabs(),
+                              Expanded(
+                                child: CodeEditor(
+                                  controller: _controller,
+                                  focusNode:  _focusNode,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         _buildDragHandle(total),
@@ -543,6 +578,72 @@ class _WorkspacePageState extends State<WorkspacePage> {
         child: Divider(height: 1, thickness: 1, color: Color(0xFF21262D)),
       ),
     );
+  }
+
+  // ── Web Tabs ──────────────────────────────────────────────────────────────
+  Widget _buildWebTabs() {
+    return Container(
+      color: const Color(0xFF161B22),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          _buildTabButton('html', 'HTML'),
+          const SizedBox(width: 8),
+          _buildTabButton('css', 'CSS'),
+          const SizedBox(width: 8),
+          _buildTabButton('js', 'JS'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabButton(String tabId, String label) {
+    final isActive = _activeWebTab == tabId;
+    return GestureDetector(
+      onTap: () => _switchWebTab(tabId),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        decoration: BoxDecoration(
+          color: isActive ? const Color(0xFF00E5FF).withAlpha(40) : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isActive ? const Color(0xFF00E5FF) : const Color(0xFF30363D),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isActive ? const Color(0xFF00E5FF) : Colors.grey,
+            fontSize: 12,
+            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _switchWebTab(String newTab) async {
+    if (_activeWebTab == newTab || _activeProject == null) return;
+    
+    // Unfocus and explicitly save the current tab before switching
+    _focusNode.unfocus();
+    await _saveCodeToDb();
+    
+    setState(() {
+      _activeWebTab = newTab;
+    });
+    
+    await _sessionManager.setLastWebTab(newTab);
+    
+    if (_activeProject!.projectType == ProjectType.web) {
+      if (newTab == 'html') {
+        _controller.text = _activeProject!.htmlContent;
+      } else if (newTab == 'css') {
+        _controller.text = _activeProject!.cssContent;
+      } else {
+        _controller.text = _activeProject!.jsContent;
+      }
+    }
   }
 
   // ── Drag handle ───────────────────────────────────────────────────────────
