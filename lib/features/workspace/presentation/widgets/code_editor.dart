@@ -22,7 +22,6 @@ const Color  _kEditorBg  = Color(0xFF0D1117);
 const Color  _kGutterFg  = Color(0xFF484F58);
 const Color  _kGutterFgActive = Color(0xFF8B949E);
 const Color  _kCursorColor    = Color(0xFF00E5FF);
-const Color  _kSelectionColor = Color(0x4400E5FF);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CodeEditor widget

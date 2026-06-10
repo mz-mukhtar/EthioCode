@@ -49,6 +49,10 @@ class MainActivity : FlutterActivity() {
         private const val CANCEL_GRACE_SEC = 2L
     }
 
+    // ── AI Tutor service (MediaPipe LLM Inference bridge) ─────────────────────
+    // Created lazily in configureFlutterEngine once the BinaryMessenger exists.
+    private var aiTutorService: AiTutorService? = null
+
     // ── Dedicated single-thread executor for Python calls ───────────────────
     // A single-thread pool ensures Python calls are serialised (no GIL fights)
     // while keeping the Android main thread free.
@@ -74,7 +78,7 @@ class MainActivity : FlutterActivity() {
             Python.start(AndroidPlatform(this))
         }
 
-        // ── Register MethodChannel ───────────────────────────────────────────
+        // ── Register Python MethodChannel ────────────────────────────────────
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             PYTHON_CHANNEL,
@@ -85,6 +89,12 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        // ── Register AI Tutor channels (MethodChannel + EventChannel) ─────────
+        aiTutorService = AiTutorService(
+            context  = applicationContext,
+            messenger = flutterEngine.dartExecutor.binaryMessenger,
+        )
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -182,5 +192,8 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         super.onDestroy()
         pythonExecutor.shutdownNow()
+        // Release the LLM model and free ~1–1.5 GB of RAM.
+        aiTutorService?.release()
+        aiTutorService = null
     }
 }

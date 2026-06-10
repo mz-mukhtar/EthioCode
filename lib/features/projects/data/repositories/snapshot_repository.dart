@@ -10,7 +10,7 @@
 //   • Map raw SQLite Map<String, Object?> rows back to Dart models.
 
 import 'package:flutter/foundation.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite/sqflite.dart' hide DatabaseException;
 import '../../../../core/database/database_helper.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────

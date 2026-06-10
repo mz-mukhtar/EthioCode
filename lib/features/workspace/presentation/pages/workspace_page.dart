@@ -23,6 +23,7 @@ import '../widgets/custom_coding_keyboard.dart';
 import '../widgets/output_pane.dart';
 import '../widgets/syntax_highlighter.dart';
 import '../../domain/services/python_runner_service.dart';
+import '../../../settings/presentation/pages/settings_page.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -220,9 +221,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
           ),
         ),
       ),
-      title: Column(
+      title: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
+        children: [
           Text(
             'main.py',
             style: TextStyle(
@@ -265,8 +266,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
                     fontWeight: FontWeight.w700,
                   ),
                   padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                  shape:   RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8.0),
+                  shape:   const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(8.0)),
                   ),
                 ),
               ),
@@ -303,7 +304,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
           },
         ),
         IconButton(
-          onPressed: () {},
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const SettingsPage()),
+            );
+          },
           icon: const Icon(Icons.tune_rounded, color: Color(0xFF8B949E)),
           tooltip: 'Settings',
         ),

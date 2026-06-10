@@ -49,7 +49,6 @@ const Color _kFgDim     = Color(0xFF484F58);
 const Color _kFgActive  = Color(0xFF00E5FF);
 const Color _kFgNormal  = Color(0xFFD4D4D4);
 const Color _kFgError   = Color(0xFFFF6B6B);
-const Color _kFgWarn    = Color(0xFFF0A500);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OutputPane
@@ -274,7 +273,7 @@ class _Tab extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 // Output / Error body
 // ─────────────────────────────────────────────────────────────────────────────
-class _OutputBody extends StatelessWidget {
+class _OutputBody extends StatefulWidget {
   final ExecutionResult? result;
   final bool isRunning;
   final bool showErrors;
@@ -286,8 +285,21 @@ class _OutputBody extends StatelessWidget {
   });
 
   @override
+  State<_OutputBody> createState() => _OutputBodyState();
+}
+
+class _OutputBodyState extends State<_OutputBody> {
+  final ScrollController _scrollCtrl = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (isRunning && result == null) {
+    if (widget.isRunning && widget.result == null) {
       return const Center(
         child: Text(
           'Running…',
@@ -300,15 +312,15 @@ class _OutputBody extends StatelessWidget {
       );
     }
 
-    if (result == null) return _emptyState();
+    if (widget.result == null) return _emptyState();
 
-    final text = showErrors ? result!.stderr : result!.stdout;
+    final text = widget.showErrors ? widget.result!.stderr : widget.result!.stdout;
     final isEmpty = text.trim().isEmpty;
 
     if (isEmpty) {
       return Center(
         child: Text(
-          showErrors ? 'No errors.' : 'No output.',
+          widget.showErrors ? 'No errors.' : 'No output.',
           style: const TextStyle(
             fontFamily: 'monospace',
             fontSize:   12.0,
@@ -319,8 +331,10 @@ class _OutputBody extends StatelessWidget {
     }
 
     return Scrollbar(
+      controller: _scrollCtrl,
       thumbVisibility: true,
       child: SingleChildScrollView(
+        controller: _scrollCtrl,
         padding: const EdgeInsets.all(12.0),
         child: SelectableText(
           text,
@@ -328,7 +342,7 @@ class _OutputBody extends StatelessWidget {
             fontFamily:    'monospace',
             fontSize:      12.5,
             height:        1.55,
-            color:         showErrors ? _kFgError : _kFgNormal,
+            color:         widget.showErrors ? _kFgError : _kFgNormal,
             letterSpacing: 0.2,
           ),
         ),

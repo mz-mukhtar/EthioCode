@@ -16,6 +16,14 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// ── Third-party runtime dependencies ─────────────────────────────────────────
+dependencies {
+    // MediaPipe LLM Inference API for on-device AI tutoring.
+    // Provides LlmInference which wraps GPU-accelerated token generation.
+    implementation("com.google.mediapipe:tasks-genai:0.10.27")
+}
+
+
 android {
     namespace = "com.example.ethiocode"
     compileSdk = flutter.compileSdkVersion
@@ -34,15 +42,6 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-
-        // ── Chaquopy Python 3.10 configuration ─────────────────────────────
-        // Specifying Python version here (inside defaultConfig) is the
-        // canonical Chaquopy location in Kotlin DSL.
-        python {
-            version = "3.10"
-            // pip packages – add as needed for offline bundling.
-            // pip { install("requests") }
-        }
 
         // ── ABI filters – target low/mid-range Android devices ─────────────
         ndk {
