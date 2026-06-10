@@ -16,6 +16,7 @@
 //      auto-switching to the Preview tab.
 //   5. The Stop (■) button calls PythonRunnerService.cancelExecution().
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../widgets/code_editor.dart';
@@ -24,6 +25,11 @@ import '../widgets/output_pane.dart';
 import '../widgets/syntax_highlighter.dart';
 import '../../domain/services/python_runner_service.dart';
 import '../../../settings/presentation/pages/settings_page.dart';
+import '../../../projects/domain/models/project.dart';
+import '../../../projects/data/repositories/project_repository.dart';
+import '../../../projects/data/repositories/snapshot_repository.dart';
+import '../../../../core/session/session_manager.dart';
+import '../../../../core/database/database_helper.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -45,9 +51,17 @@ class WorkspacePage extends StatefulWidget {
 
 class _WorkspacePageState extends State<WorkspacePage> {
   // ── Editor state ──────────────────────────────────────────────────────────
-  final SyntaxHighlightingController _controller =
-      SyntaxHighlightingController(text: _kWelcomeSnippet);
+  final SyntaxHighlightingController _controller = SyntaxHighlightingController();
   final FocusNode _focusNode = FocusNode();
+
+  // ── Persistence & Session ─────────────────────────────────────────────────
+  final SessionManager _sessionManager = SessionManager();
+  final ProjectRepository _projectRepo = ProjectRepository();
+  final SnapshotRepository _snapshotRepo = SnapshotRepository();
+  
+  Project? _activeProject;
+  Timer? _autosaveTimer;
+  bool _isLoading = true;
 
   // ── Split-view ────────────────────────────────────────────────────────────
   final ValueNotifier<double> _splitRatio =
@@ -72,7 +86,95 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   @override
+  void initState() {
+    super.initState();
+    
+    _controller.addListener(_onTextChanged);
+    _loadSession();
+  }
+
+  Future<void> _loadSession() async {
+    
+    final lastProjId = await _sessionManager.getLastProjectId();
+    Project? p;
+    if (lastProjId != null) {
+      
+      p = await _projectRepo.getProject(lastProjId);
+    }
+    
+    p ??= await _projectRepo.createProject(
+      title: 'My First Python Project',
+      language: 'python',
+      currentCode: _kWelcomeSnippet,
+    );
+
+    
+    await _openProject(p);
+  }
+
+  Future<void> _openProject(Project project) async {
+    // Save current cursor if there's an active project before switching
+    if (_activeProject != null) {
+      await _sessionManager.setLastCursorPosition(_controller.selection.baseOffset);
+    }
+
+    // Update active project
+    project = project.copyWith(lastOpenedAt: DatabaseHelper.nowMs());
+    await _projectRepo.updateProject(project);
+    await _sessionManager.setLastProjectId(project.id);
+    
+    _controller.text = project.currentCode;
+
+    // Restore cursor position if this was the last active project
+    final lastCursor = await _sessionManager.getLastCursorPosition();
+    if (lastCursor >= 0 && lastCursor <= _controller.text.length) {
+      _controller.selection = TextSelection.collapsed(offset: lastCursor);
+    } else {
+      _controller.selection = TextSelection.collapsed(offset: _controller.text.length);
+    }
+
+    setState(() {
+      _activeProject = project;
+      _isLoading = false;
+    });
+  }
+
+  void _onTextChanged() {
+    if (_isLoading || _activeProject == null) return;
+    
+    // Debounce save for 1000ms
+    _autosaveTimer?.cancel();
+    _autosaveTimer = Timer(const Duration(milliseconds: 1000), _saveCodeToDb);
+  }
+
+  Future<void> _saveCodeToDb() async {
+    if (_activeProject == null) return;
+    
+    final newCode = _controller.text;
+    if (_activeProject!.currentCode == newCode) return; // No change
+
+    final updated = _activeProject!.copyWith(
+      currentCode: newCode,
+      updatedAt: DatabaseHelper.nowMs(),
+    );
+    _activeProject = updated;
+    await _projectRepo.updateProject(updated);
+    
+    // Save cursor position implicitly during autosaves
+    final offset = _controller.selection.baseOffset;
+    if (offset >= 0) {
+      await _sessionManager.setLastCursorPosition(offset);
+    }
+  }
+
+  @override
   void dispose() {
+    _autosaveTimer?.cancel();
+    _controller.removeListener(_onTextChanged);
+    // Final sync
+    _saveCodeToDb().ignore();
+    _sessionManager.setLastCursorPosition(_controller.selection.baseOffset).ignore();
+    
     _controller.dispose();
     _focusNode.dispose();
     _splitRatio.dispose();
@@ -104,6 +206,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
       result:    null,
       activeTab: OutputTab.output,
     );
+
+    // Save project and capture snapshot BEFORE execution
+    await _saveCodeToDb();
+    if (_activeProject != null) {
+      await _snapshotRepo.insertSnapshot(
+        projectId: _activeProject!.id,
+        codeContent: code,
+      );
+    }
 
     final result = await _pythonRunner.run(code: code);
 
@@ -200,6 +311,107 @@ class _WorkspacePageState extends State<WorkspacePage> {
     );
   }
 
+  // ── Project Switcher ──────────────────────────────────────────────────────
+  Future<void> _showProjectSwitcher() async {
+    final projects = await _projectRepo.getProjects();
+    
+    if (!mounted) return;
+    
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E2329),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Projects',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.add, color: Color(0xFF00E5FF)),
+                        onPressed: () async {
+                          final nav = Navigator.of(context);
+                          final p = await _projectRepo.createProject(
+                            title: 'Project \${projects.length + 1}',
+                            language: 'python',
+                            currentCode: _kWelcomeSnippet,
+                          );
+                          nav.pop();
+                          _openProject(p);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: projects.length,
+                    itemBuilder: (context, index) {
+                      final p = projects[index];
+                      final isActive = _activeProject?.id == p.id;
+                      
+                      return ListTile(
+                        leading: Icon(
+                          Icons.description_rounded,
+                          color: isActive ? const Color(0xFF00E5FF) : Colors.grey,
+                        ),
+                        title: Text(
+                          p.title,
+                          style: TextStyle(
+                            color: isActive ? Colors.white : Colors.grey[300],
+                            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                        subtitle: Text(
+                          "Last opened: \${DateTime.fromMillisecondsSinceEpoch(p.lastOpenedAt).toString().split('.').first}",
+                          style: const TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                          onPressed: () async {
+                            if (projects.length <= 1) return; // Don't delete last project
+                            final nav = Navigator.of(context);
+                            await _projectRepo.deleteProject(p.id);
+                            if (isActive) {
+                              nav.pop();
+                              _loadSession(); // Load another project
+                            } else {
+                              setSheetState(() {
+                                projects.removeAt(index);
+                              });
+                            }
+                          },
+                        ),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _openProject(p);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   // ── AppBar ────────────────────────────────────────────────────────────────
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
@@ -208,34 +420,40 @@ class _WorkspacePageState extends State<WorkspacePage> {
       elevation:        0,
       titleSpacing:     16.0,
       leading: Padding(
-        padding: const EdgeInsets.all(10.0),
-        child: Container(
-          decoration: BoxDecoration(
-            color:        const Color(0xFF00E5FF).withAlpha(30),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: const Icon(
-            Icons.code_rounded,
-            color: Color(0xFF00E5FF),
-            size:  20,
+        padding: const EdgeInsets.all(8.0),
+        child: InkWell(
+          onTap: _showProjectSwitcher,
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            decoration: BoxDecoration(
+              color:        const Color(0xFF00E5FF).withAlpha(30),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: const Icon(
+              Icons.folder_open_rounded,
+              color: Color(0xFF00E5FF),
+              size:  20,
+            ),
           ),
         ),
       ),
-      title: const Column(
+      title: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'main.py',
-            style: TextStyle(
+            _activeProject?.title ?? 'Loading...',
+            style: const TextStyle(
               fontFamily:    'monospace',
               fontSize:      14.0,
               fontWeight:    FontWeight.w600,
               color:         Color(0xFFD4D4D4),
               letterSpacing: 0.3,
             ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-          SizedBox(height: 1),
-          Text(
+          const SizedBox(height: 1),
+          const Text(
             'Python · EthioCode',
             style: TextStyle(
               fontFamily: 'monospace',

@@ -1,7 +1,18 @@
+import "dart:io" show Platform;
 import 'package:flutter/material.dart';
 import 'features/workspace/presentation/pages/workspace_page.dart';
+import 'core/database/database_helper.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-void main() {
+void main() async {
+  
+  WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isLinux || Platform.isWindows) { sqfliteFfiInit();  }
+  
+  
+  await DatabaseHelper.instance.database;
+  
+  
   runApp(const EthioCodeApp());
 }
 

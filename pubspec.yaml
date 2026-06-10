@@ -21,6 +21,7 @@ dependencies:
 
   # Lightweight path manipulation used by DatabaseHelper
   path: ^1.9.0
+  sqflite_common_ffi: ^2.4.1
 
 dev_dependencies:
   flutter_test:

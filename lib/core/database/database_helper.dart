@@ -42,12 +42,20 @@ abstract class DbSchema {
   static const String tableProjects           = 'projects';
   static const String tableSnapshots          = 'snapshots';
   static const String tableCurriculumProgress = 'curriculum_progress';
+  static const String tableSessionState       = 'session_state';
+
+  // ── session_state columns ──────────────────────────────────────────────────
+  static const String sessionKey   = 'key';
+  static const String sessionValue = 'value';
 
   // ── projects columns ───────────────────────────────────────────────────────
   static const String projId         = 'id';
   static const String projTitle      = 'title';
   static const String projLanguage   = 'language';
+  static const String projCurrentCode = 'current_code';
   static const String projCreatedAt  = 'created_at';
+  static const String projUpdatedAt  = 'updated_at';
+  static const String projLastOpenedAt = 'last_opened_at';
 
   // ── snapshots columns ──────────────────────────────────────────────────────
   static const String snapId          = 'id';
@@ -96,7 +104,7 @@ class DatabaseHelper {
 
   /// The current schema version.  Increment this whenever [_onUpgrade] gains
   /// a new migration block, then add a corresponding `case` clause.
-  static const int _kSchemaVersion = 1;
+  static const int _kSchemaVersion = 2;
 
   static const String _kDbFileName = 'ethiocode.db';
 
@@ -104,6 +112,7 @@ class DatabaseHelper {
 
   /// Returns the open [Database] instance, initialising it on first call.
   Future<Database> get database async {
+    
     if (_db != null && _db!.isOpen) return _db!;
     _db = await _initDatabase();
     return _db!;
@@ -116,6 +125,7 @@ class DatabaseHelper {
       final docsDir   = await getApplicationDocumentsDirectory();
       final dbPath    = p.join(docsDir.path, _kDbFileName);
 
+      
       return await openDatabase(
         dbPath,
         version:     _kSchemaVersion,
@@ -131,6 +141,7 @@ class DatabaseHelper {
 
   /// Enable foreign-key constraints for every new connection.
   Future<void> _onConfigure(Database db) async {
+    
     await db.execute('PRAGMA foreign_keys = ON;');
     // WAL journal mode: better concurrent-read performance on Android.
     await db.execute('PRAGMA journal_mode = WAL;');
@@ -141,6 +152,7 @@ class DatabaseHelper {
   // ── Schema creation (version 1) ───────────────────────────────────────────
 
   Future<void> _onCreate(Database db, int version) async {
+    
     final batch = db.batch();
 
     // ── projects ─────────────────────────────────────────────────────────────
@@ -151,7 +163,10 @@ class DatabaseHelper {
         ${DbSchema.projLanguage}  TEXT    NOT NULL DEFAULT 'python'
                                   CHECK(${DbSchema.projLanguage} IN
                                     ('python','html','plaintext')),
-        ${DbSchema.projCreatedAt} INTEGER NOT NULL
+        ${DbSchema.projCurrentCode} TEXT    NOT NULL DEFAULT '',
+        ${DbSchema.projCreatedAt} INTEGER NOT NULL,
+        ${DbSchema.projUpdatedAt} INTEGER NOT NULL,
+        ${DbSchema.projLastOpenedAt} INTEGER NOT NULL
       );
     ''');
 
@@ -200,6 +215,14 @@ class DatabaseHelper {
       );
     ''');
 
+    // ── session_state ────────────────────────────────────────────────────────
+    batch.execute('''
+      CREATE TABLE IF NOT EXISTS ${DbSchema.tableSessionState} (
+        ${DbSchema.sessionKey}   TEXT PRIMARY KEY,
+        ${DbSchema.sessionValue} TEXT NOT NULL
+      );
+    ''');
+
     try {
       await batch.commit(noResult: true, continueOnError: false);
     } catch (e) {
@@ -214,15 +237,29 @@ class DatabaseHelper {
   // the default which exits.  Add new cases as the schema evolves.
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    
     try {
       // ignore: unused_local_variable — the loop variable `v` drives ordering
       for (int v = oldVersion; v < newVersion; v++) {
         switch (v) {
           case 1:
-            // Future v1 → v2 migration would go here, e.g.:
-            // await db.execute(
-            //   'ALTER TABLE snapshots ADD COLUMN branch TEXT DEFAULT "main";'
-            // );
+            // v1 → v2: Add current_code, updated_at, last_opened_at to projects
+            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projCurrentCode} TEXT NOT NULL DEFAULT \'\'');
+            
+            // For existing rows, default updated_at and last_opened_at to their created_at time
+            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projUpdatedAt} INTEGER NOT NULL DEFAULT 0');
+            await db.execute('UPDATE ${DbSchema.tableProjects} SET ${DbSchema.projUpdatedAt} = ${DbSchema.projCreatedAt}');
+            
+            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projLastOpenedAt} INTEGER NOT NULL DEFAULT 0');
+            await db.execute('UPDATE ${DbSchema.tableProjects} SET ${DbSchema.projLastOpenedAt} = ${DbSchema.projCreatedAt}');
+
+            // Create new session_state table
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS ${DbSchema.tableSessionState} (
+                ${DbSchema.sessionKey}   TEXT PRIMARY KEY,
+                ${DbSchema.sessionValue} TEXT NOT NULL
+              );
+            ''');
             break;
           // Add `case 2:`, `case 3:` etc. as the schema grows.
         }
