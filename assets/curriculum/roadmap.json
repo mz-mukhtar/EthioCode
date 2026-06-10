@@ -1,0 +1,42 @@
+{
+  "version": "1.0.0",
+  "nodes": [
+    {
+      "id": "py_intro_01",
+      "title": "Welcome to Python",
+      "type": "lesson",
+      "description": "Learn the basics of printing to the console.",
+      "requires": [],
+      "task_data": {
+        "content": "Use print('Selam!') to output text.",
+        "expected_output": "Selam!"
+      }
+    },
+    {
+      "id": "py_var_02",
+      "title": "Variable Syntax Sniper",
+      "type": "syntax_sniper",
+      "description": "Find and fix the syntax error in the variable declaration.",
+      "requires": ["py_intro_01"],
+      "task_data": {
+        "buggy_code": "my_name = 'Abebe\nprint(my_name)",
+        "hints": ["Check your quotation marks."],
+        "expected_output": "Abebe"
+      }
+    },
+    {
+      "id": "py_loop_03",
+      "title": "Parsons Loop Puzzle",
+      "type": "parsons_puzzle",
+      "description": "Arrange the blocks to print numbers 1 to 3.",
+      "requires": ["py_var_02"],
+      "task_data": {
+        "blocks": [
+          "print(i)",
+          "for i in range(1, 4):"
+        ],
+        "expected_code": "for i in range(1, 4):\n    print(i)"
+      }
+    }
+  ]
+}

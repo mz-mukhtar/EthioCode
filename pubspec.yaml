@@ -13,6 +13,15 @@ dependencies:
   # WebView renderer for offline HTML/CSS/JS preview
   webview_flutter: ^4.13.1
 
+  # Local SQLite database – projects, snapshots, curriculum_progress
+  sqflite: ^2.4.2+1
+
+  # Resolve device-local document & support directories for the DB file
+  path_provider: ^2.1.5
+
+  # Lightweight path manipulation used by DatabaseHelper
+  path: ^1.9.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -20,3 +29,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # Offline curriculum definition bundled with the APK
+  assets:
+    - assets/curriculum/roadmap.json
