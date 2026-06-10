@@ -1,17 +1,20 @@
 // lib/features/workspace/presentation/pages/workspace_page.dart
 //
 // Root page of the coding workspace. Assembles:
-//   • An app bar with file name, run button, and settings button.
+//   • An app bar with file name, run/stop buttons, and settings button.
 //   • A vertical split-view between the CodeEditor (top) and OutputPane (bottom)
 //     separated by a draggable divider handle.
 //   • A sticky CustomCodingKeyboard row anchored directly above the OS keyboard
-//     using [MediaQuery.viewInsetsOf] – it never scrolls away.
+//     using resizeToAvoidBottomInset – it never scrolls away.
 //
-// State management uses a single [ValueNotifier<double>] for the split ratio
-// (kept between 0.25 and 0.80) – no heavy third-party library needed.
-//
-// The layout uses [LayoutBuilder] to know the exact available height after
-// the OS keyboard has inset the view, preventing all overflow.
+// Execution flow:
+//   1. User presses ▶ Run.
+//   2. WorkspacePage detects whether the code is HTML or Python.
+//   3. For Python → calls PythonRunnerService.run() and pushes the
+//      ExecutionResult into the OutputPaneState notifier.
+//   4. For HTML   → sets htmlSource on the OutputPaneState notifier,
+//      auto-switching to the Preview tab.
+//   5. The Stop (■) button calls PythonRunnerService.cancelExecution().
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -19,15 +22,15 @@ import '../widgets/code_editor.dart';
 import '../widgets/custom_coding_keyboard.dart';
 import '../widgets/output_pane.dart';
 import '../widgets/syntax_highlighter.dart';
+import '../../domain/services/python_runner_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
-const double _kDividerHeight     = 28.0;  // touch-target height of the drag handle
-const double _kMinSplitRatio     = 0.20;  // editor cannot be smaller than 20 %
-const double _kMaxSplitRatio     = 0.85;  // editor cannot be larger than 85 %
-const double _kDefaultSplitRatio = 0.60;  // initial: 60 % editor / 40 % output
-const double _kKeyboardRowHeight = 48.0;
+const double _kDividerHeight     = 28.0;
+const double _kMinSplitRatio     = 0.20;
+const double _kMaxSplitRatio     = 0.85;
+const double _kDefaultSplitRatio = 0.60;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WorkspacePage
@@ -40,55 +43,106 @@ class WorkspacePage extends StatefulWidget {
 }
 
 class _WorkspacePageState extends State<WorkspacePage> {
-  // ── shared state ──────────────────────────────────────────────────────────
-  /// The text controller is shared with both CodeEditor and CustomCodingKeyboard
-  /// so the keyboard can inject text at the current cursor position.
+  // ── Editor state ──────────────────────────────────────────────────────────
   final SyntaxHighlightingController _controller =
       SyntaxHighlightingController(text: _kWelcomeSnippet);
-
-  /// The focus node is shared so the keyboard row can restore focus after a tap
-  /// without collapsing the OS keyboard.
   final FocusNode _focusNode = FocusNode();
 
-  /// Ratio of the total available height that the editor pane occupies.
+  // ── Split-view ────────────────────────────────────────────────────────────
   final ValueNotifier<double> _splitRatio =
       ValueNotifier<double>(_kDefaultSplitRatio);
-
-  // Track drag start values to compute delta correctly.
   double _dragStartRatio = _kDefaultSplitRatio;
   double _dragStartDy    = 0.0;
 
-  // ── lifecycle ────────────────────────────────────────────────────────────
+  // ── Execution engine ──────────────────────────────────────────────────────
+  final PythonRunnerService _pythonRunner = PythonRunnerService();
+  final ValueNotifier<OutputPaneState> _outputState =
+      ValueNotifier<OutputPaneState>(const OutputPaneState());
+
+  // ── Language detection ────────────────────────────────────────────────────
+  /// True when the editor content looks like HTML.
+  bool get _isHtml {
+    final text = _controller.text.trimLeft();
+    return text.startsWith('<!') ||
+        text.toLowerCase().startsWith('<html') ||
+        text.toLowerCase().startsWith('<head') ||
+        text.toLowerCase().startsWith('<body');
+  }
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
   @override
   void dispose() {
     _controller.dispose();
     _focusNode.dispose();
     _splitRatio.dispose();
+    _outputState.dispose();
     super.dispose();
   }
 
-  // ── drag handle callbacks ─────────────────────────────────────────────────
-  void _onDragStart(DragStartDetails details, double availableHeight) {
+  // ── Run ───────────────────────────────────────────────────────────────────
+  Future<void> _handleRun() async {
+    // Unfocus so the keyboard doesn't interfere with the scrollable output.
+    _focusNode.unfocus();
+
+    final code = _controller.text;
+    if (code.trim().isEmpty) return;
+
+    if (_isHtml) {
+      // HTML mode: send directly to the WebView preview.
+      _outputState.value = OutputPaneState(
+        htmlSource: code,
+        activeTab:  OutputTab.preview,
+        isRunning:  false,
+      );
+      return;
+    }
+
+    // Python mode.
+    _outputState.value = _outputState.value.copyWith(
+      isRunning: true,
+      result:    null,
+      activeTab: OutputTab.output,
+    );
+
+    final result = await _pythonRunner.run(code: code);
+
+    if (!mounted) return;
+
+    _outputState.value = _outputState.value.copyWith(
+      isRunning: false,
+      result:    result,
+      // Auto-switch to errors tab when there's a problem and no stdout.
+      activeTab: (result.hasError && result.stdout.isEmpty)
+          ? OutputTab.errors
+          : OutputTab.output,
+    );
+  }
+
+  Future<void> _handleStop() async {
+    await _pythonRunner.cancelExecution();
+    if (!mounted) return;
+    _outputState.value = _outputState.value.copyWith(isRunning: false);
+  }
+
+  // ── Split-view drag ───────────────────────────────────────────────────────
+  void _onDragStart(DragStartDetails d, double h) {
     _dragStartRatio = _splitRatio.value;
-    _dragStartDy    = details.globalPosition.dy;
+    _dragStartDy    = d.globalPosition.dy;
   }
 
-  void _onDragUpdate(DragUpdateDetails details, double availableHeight) {
-    if (availableHeight <= 0) return;
-    final delta = details.globalPosition.dy - _dragStartDy;
-    final newRatio = (_dragStartRatio + delta / availableHeight)
-        .clamp(_kMinSplitRatio, _kMaxSplitRatio);
-    _splitRatio.value = newRatio;
+  void _onDragUpdate(DragUpdateDetails d, double h) {
+    if (h <= 0) return;
+    _splitRatio.value =
+        (_dragStartRatio + (d.globalPosition.dy - _dragStartDy) / h)
+            .clamp(_kMinSplitRatio, _kMaxSplitRatio);
   }
 
-  // ── build ─────────────────────────────────────────────────────────────────
+  // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    // Keep the status bar visible and tinted to match the dark IDE theme.
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor:           Colors.transparent,
-      statusBarBrightness:      Brightness.dark,
-      statusBarIconBrightness:  Brightness.light,
+      statusBarColor:          Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
     ));
 
     return Scaffold(
@@ -97,43 +151,35 @@ class _WorkspacePageState extends State<WorkspacePage> {
       appBar: _buildAppBar(),
       body: Column(
         children: [
-          // ── split-view area ──────────────────────────────────────────────
+          // ── Split-view ────────────────────────────────────────────────────
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
-                // constraints.maxHeight is the height available AFTER the OS
-                // keyboard has inset the view (because resizeToAvoidBottomInset
-                // is true). The split is computed from this true available area.
-                final totalHeight = constraints.maxHeight;
-
+                final total = constraints.maxHeight;
                 return ValueListenableBuilder<double>(
                   valueListenable: _splitRatio,
                   builder: (context, ratio, _) {
-                    final editorHeight =
-                        (totalHeight * ratio - _kDividerHeight / 2)
-                            .clamp(0.0, totalHeight);
-                    final outputHeight =
-                        (totalHeight * (1 - ratio) - _kDividerHeight / 2)
-                            .clamp(0.0, totalHeight);
+                    final editorH =
+                        (total * ratio - _kDividerHeight / 2).clamp(0.0, total);
+                    final outputH =
+                        (total * (1 - ratio) - _kDividerHeight / 2)
+                            .clamp(0.0, total);
 
                     return Column(
                       children: [
-                        // ── Editor pane ──────────────────────────────────
                         SizedBox(
-                          height: editorHeight,
+                          height: editorH,
                           child: CodeEditor(
                             controller: _controller,
                             focusNode:  _focusNode,
                           ),
                         ),
-
-                        // ── Draggable divider ─────────────────────────────
-                        _buildDragHandle(totalHeight),
-
-                        // ── Output pane ───────────────────────────────────
+                        _buildDragHandle(total),
                         SizedBox(
-                          height: outputHeight,
-                          child: const OutputPane(),
+                          height: outputH,
+                          child: OutputPane(
+                            stateNotifier: _outputState,
+                          ),
                         ),
                       ],
                     );
@@ -143,7 +189,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
             ),
           ),
 
-          // ── Sticky custom keyboard row ────────────────────────────────────
+          // ── Sticky custom keyboard ────────────────────────────────────────
           CustomCodingKeyboard(
             controller: _controller,
             focusNode:  _focusNode,
@@ -156,10 +202,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
   // ── AppBar ────────────────────────────────────────────────────────────────
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
-      backgroundColor:     const Color(0xFF161B22),
-      surfaceTintColor:    Colors.transparent,
-      elevation:           0,
-      titleSpacing:        16.0,
+      backgroundColor:  const Color(0xFF161B22),
+      surfaceTintColor: Colors.transparent,
+      elevation:        0,
+      titleSpacing:     16.0,
       leading: Padding(
         padding: const EdgeInsets.all(10.0),
         child: Container(
@@ -180,10 +226,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
           Text(
             'main.py',
             style: TextStyle(
-              fontFamily:  'monospace',
-              fontSize:    14.0,
-              fontWeight:  FontWeight.w600,
-              color:       Color(0xFFD4D4D4),
+              fontFamily:    'monospace',
+              fontSize:      14.0,
+              fontWeight:    FontWeight.w600,
+              color:         Color(0xFFD4D4D4),
               letterSpacing: 0.3,
             ),
           ),
@@ -192,53 +238,73 @@ class _WorkspacePageState extends State<WorkspacePage> {
             'Python · EthioCode',
             style: TextStyle(
               fontFamily: 'monospace',
-              fontSize:    10.0,
+              fontSize:   10.0,
               color:      Color(0xFF484F58),
             ),
           ),
         ],
       ),
       actions: [
-        // ── Run button ─────────────────────────────────────────────────────
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
-          child: TextButton.icon(
-            onPressed: () {
-              // TODO(engine): wire to interpreter/runner when implemented.
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('▶  Run engine coming soon!'),
-                  duration: Duration(seconds: 2),
-                  backgroundColor: Color(0xFF161B22),
+        // ── Stop button (visible only while running) ──────────────────────
+        ValueListenableBuilder<OutputPaneState>(
+          valueListenable: _outputState,
+          builder: (_, state, __) {
+            if (!state.isRunning) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+              child: TextButton.icon(
+                onPressed: _handleStop,
+                icon:  const Icon(Icons.stop_rounded, size: 18),
+                label: const Text('Stop'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  backgroundColor: const Color(0xFF8B2020),
+                  textStyle: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize:   13.0,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                  shape:   RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
                 ),
-              );
-            },
-            icon:  const Icon(Icons.play_arrow_rounded, size: 18),
-            label: const Text('Run'),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.black,
-              backgroundColor: const Color(0xFF00E5FF),
-              textStyle: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize:   13.0,
-                fontWeight: FontWeight.w700,
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 14.0),
-              shape:   RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8.0),
-              ),
-            ),
-          ),
-        ),
-        // ── Settings icon ──────────────────────────────────────────────────
-        IconButton(
-          onPressed: () {
-            // TODO: open settings drawer.
+            );
           },
-          icon: const Icon(
-            Icons.tune_rounded,
-            color: Color(0xFF8B949E),
-          ),
+        ),
+        // ── Run button ─────────────────────────────────────────────────────
+        ValueListenableBuilder<OutputPaneState>(
+          valueListenable: _outputState,
+          builder: (_, state, __) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+              child: TextButton.icon(
+                onPressed: state.isRunning ? null : _handleRun,
+                icon:  const Icon(Icons.play_arrow_rounded, size: 18),
+                label: const Text('Run'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.black,
+                  backgroundColor: state.isRunning
+                      ? const Color(0xFF00E5FF).withAlpha(90)
+                      : const Color(0xFF00E5FF),
+                  textStyle: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize:   13.0,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 14.0),
+                  shape:   RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        IconButton(
+          onPressed: () {},
+          icon: const Icon(Icons.tune_rounded, color: Color(0xFF8B949E)),
           tooltip: 'Settings',
         ),
         const SizedBox(width: 4),
@@ -250,19 +316,19 @@ class _WorkspacePageState extends State<WorkspacePage> {
     );
   }
 
-  // ── Drag handle widget ────────────────────────────────────────────────────
-  Widget _buildDragHandle(double availableHeight) {
+  // ── Drag handle ───────────────────────────────────────────────────────────
+  Widget _buildDragHandle(double h) {
     return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onVerticalDragStart:  (d) => _onDragStart(d, availableHeight),
-      onVerticalDragUpdate: (d) => _onDragUpdate(d, availableHeight),
+      behavior:             HitTestBehavior.opaque,
+      onVerticalDragStart:  (d) => _onDragStart(d, h),
+      onVerticalDragUpdate: (d) => _onDragUpdate(d, h),
       child: Container(
         height: _kDividerHeight,
         color:  const Color(0xFF0D1117),
         child: Center(
           child: Container(
-            height:       4.0,
-            width:        48.0,
+            height: 4.0,
+            width:  48.0,
             decoration: BoxDecoration(
               color:        const Color(0xFF30363D),
               borderRadius: BorderRadius.circular(2.0),
@@ -275,7 +341,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Welcome snippet – shown when the IDE first opens.
+// Welcome snippet
 // ─────────────────────────────────────────────────────────────────────────────
 const String _kWelcomeSnippet = '''# EthioCode – Python Playground
 # Welcome! Start typing your code below.

@@ -10,6 +10,9 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # WebView renderer for offline HTML/CSS/JS preview
+  webview_flutter: ^4.13.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
