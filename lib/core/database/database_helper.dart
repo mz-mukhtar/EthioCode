@@ -53,6 +53,11 @@ abstract class DbSchema {
   static const String projTitle      = 'title';
   static const String projLanguage   = 'language';
   static const String projCurrentCode = 'current_code';
+  static const String projType       = 'project_type';
+  static const String projPythonContent = 'python_content';
+  static const String projHtmlContent   = 'html_content';
+  static const String projCssContent    = 'css_content';
+  static const String projJsContent     = 'js_content';
   static const String projCreatedAt  = 'created_at';
   static const String projUpdatedAt  = 'updated_at';
   static const String projLastOpenedAt = 'last_opened_at';
@@ -104,7 +109,7 @@ class DatabaseHelper {
 
   /// The current schema version.  Increment this whenever [_onUpgrade] gains
   /// a new migration block, then add a corresponding `case` clause.
-  static const int _kSchemaVersion = 2;
+  static const int _kSchemaVersion = 3;
 
   static const String _kDbFileName = 'ethiocode.db';
 
@@ -160,10 +165,14 @@ class DatabaseHelper {
       CREATE TABLE IF NOT EXISTS ${DbSchema.tableProjects} (
         ${DbSchema.projId}        INTEGER PRIMARY KEY AUTOINCREMENT,
         ${DbSchema.projTitle}     TEXT    NOT NULL DEFAULT 'Untitled',
-        ${DbSchema.projLanguage}  TEXT    NOT NULL DEFAULT 'python'
-                                  CHECK(${DbSchema.projLanguage} IN
-                                    ('python','html','plaintext')),
+        ${DbSchema.projLanguage}  TEXT    NOT NULL DEFAULT 'python',
         ${DbSchema.projCurrentCode} TEXT    NOT NULL DEFAULT '',
+        ${DbSchema.projType}      TEXT    NOT NULL DEFAULT 'python'
+                                  CHECK(${DbSchema.projType} IN ('python','web')),
+        ${DbSchema.projPythonContent} TEXT NOT NULL DEFAULT '',
+        ${DbSchema.projHtmlContent}   TEXT NOT NULL DEFAULT '',
+        ${DbSchema.projCssContent}    TEXT NOT NULL DEFAULT '',
+        ${DbSchema.projJsContent}     TEXT NOT NULL DEFAULT '',
         ${DbSchema.projCreatedAt} INTEGER NOT NULL,
         ${DbSchema.projUpdatedAt} INTEGER NOT NULL,
         ${DbSchema.projLastOpenedAt} INTEGER NOT NULL
@@ -261,7 +270,18 @@ class DatabaseHelper {
               );
             ''');
             break;
-          // Add `case 2:`, `case 3:` etc. as the schema grows.
+          case 2:
+            // v2 → v3: Add project_type, python_content, html_content, css_content, js_content
+            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projType} TEXT NOT NULL DEFAULT \'python\'');
+            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projPythonContent} TEXT NOT NULL DEFAULT \'\'');
+            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projHtmlContent} TEXT NOT NULL DEFAULT \'\'');
+            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projCssContent} TEXT NOT NULL DEFAULT \'\'');
+            await db.execute('ALTER TABLE ${DbSchema.tableProjects} ADD COLUMN ${DbSchema.projJsContent} TEXT NOT NULL DEFAULT \'\'');
+
+            // Migrate data
+            await db.execute('UPDATE ${DbSchema.tableProjects} SET ${DbSchema.projPythonContent} = ${DbSchema.projCurrentCode}');
+            break;
+          // Add `case 3:`, `case 4:` etc. as the schema grows.
         }
       }
     } catch (e) {

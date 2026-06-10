@@ -3,16 +3,20 @@
 import 'package:sqflite/sqflite.dart' hide DatabaseException;
 import '../../../../core/database/database_helper.dart';
 import '../../domain/models/project.dart';
+import '../../domain/models/project_type.dart';
 
 /// CRUD operations for the [Project] entity.
 class ProjectRepository {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
 
-  /// Creates a new project with the given [title] and [language] and an optional initial [code].
+  /// Creates a new project with the given [title] and [projectType] and optional initial code.
   Future<Project> createProject({
     required String title,
-    required String language,
-    String currentCode = '',
+    required ProjectType projectType,
+    String pythonContent = '',
+    String htmlContent = '',
+    String cssContent = '',
+    String jsContent = '',
   }) async {
     try {
       final db = await _dbHelper.database;
@@ -21,8 +25,11 @@ class ProjectRepository {
       final project = Project(
         id: 0, // SQLite will autoincrement
         title: title,
-        language: language,
-        currentCode: currentCode,
+        projectType: projectType,
+        pythonContent: pythonContent,
+        htmlContent: htmlContent,
+        cssContent: cssContent,
+        jsContent: jsContent,
         createdAt: now,
         updatedAt: now,
         lastOpenedAt: now,

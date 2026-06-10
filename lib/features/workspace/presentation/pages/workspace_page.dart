@@ -26,6 +26,7 @@ import '../widgets/syntax_highlighter.dart';
 import '../../domain/services/python_runner_service.dart';
 import '../../../settings/presentation/pages/settings_page.dart';
 import '../../../projects/domain/models/project.dart';
+import '../../../projects/domain/models/project_type.dart';
 import '../../../projects/data/repositories/project_repository.dart';
 import '../../../projects/data/repositories/snapshot_repository.dart';
 import '../../../../core/session/session_manager.dart';
@@ -104,8 +105,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
     
     p ??= await _projectRepo.createProject(
       title: 'My First Python Project',
-      language: 'python',
-      currentCode: _kWelcomeSnippet,
+      projectType: ProjectType.python,
+      pythonContent: _kWelcomeSnippet,
     );
 
     
@@ -123,7 +124,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     await _projectRepo.updateProject(project);
     await _sessionManager.setLastProjectId(project.id);
     
-    _controller.text = project.currentCode;
+    _controller.text = project.pythonContent;
 
     // Restore cursor position if this was the last active project
     final lastCursor = await _sessionManager.getLastCursorPosition();
@@ -151,10 +152,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
     if (_activeProject == null) return;
     
     final newCode = _controller.text;
-    if (_activeProject!.currentCode == newCode) return; // No change
+    if (_activeProject!.pythonContent == newCode) return; // No change
 
     final updated = _activeProject!.copyWith(
-      currentCode: newCode,
+      pythonContent: newCode,
       updatedAt: DatabaseHelper.nowMs(),
     );
     _activeProject = updated;
@@ -345,13 +346,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
                         icon: const Icon(Icons.add, color: Color(0xFF00E5FF)),
                         onPressed: () async {
                           final nav = Navigator.of(context);
-                          final p = await _projectRepo.createProject(
-                            title: 'Project \${projects.length + 1}',
-                            language: 'python',
-                            currentCode: _kWelcomeSnippet,
+                          await showDialog(
+                            context: context,
+                            builder: (context) => _CreateProjectDialog(
+                              existingProjects: projects,
+                              onProjectCreated: (p) {
+                                nav.pop(); // pop dialog
+                                nav.pop(); // pop bottom sheet
+                                _openProject(p);
+                              },
+                            ),
                           );
-                          nav.pop();
-                          _openProject(p);
                         },
                       ),
                     ],
@@ -376,9 +381,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
                             fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
                           ),
                         ),
-                        subtitle: Text(
+                        subtitle: const Text(
                           "Last opened: \${DateTime.fromMillisecondsSinceEpoch(p.lastOpenedAt).toString().split('.').first}",
-                          style: const TextStyle(color: Colors.grey, fontSize: 12),
+                          style: TextStyle(color: Colors.grey, fontSize: 12),
                         ),
                         trailing: IconButton(
                           icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
@@ -582,3 +587,130 @@ def main():
 if __name__ == "__main__":
     main()
 ''';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Create Project Dialog
+// ─────────────────────────────────────────────────────────────────────────────
+class _CreateProjectDialog extends StatefulWidget {
+  final List<Project> existingProjects;
+  final Function(Project) onProjectCreated;
+
+  const _CreateProjectDialog({
+    required this.existingProjects,
+    required this.onProjectCreated,
+  });
+
+  @override
+  State<_CreateProjectDialog> createState() => _CreateProjectDialogState();
+}
+
+class _CreateProjectDialogState extends State<_CreateProjectDialog> {
+  final _nameController = TextEditingController();
+  ProjectType _selectedType = ProjectType.python;
+  String? _errorMessage;
+  final ProjectRepository _projectRepo = ProjectRepository();
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleCreate() async {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      setState(() => _errorMessage = 'Project name cannot be empty.');
+      return;
+    }
+
+    final isDuplicate = widget.existingProjects.any((p) => p.title.toLowerCase() == name.toLowerCase());
+    if (isDuplicate) {
+      setState(() => _errorMessage = 'A project with this name already exists.');
+      return;
+    }
+
+    setState(() => _errorMessage = null);
+
+    Project newProject;
+    if (_selectedType == ProjectType.python) {
+      newProject = await _projectRepo.createProject(
+        title: name,
+        projectType: ProjectType.python,
+        pythonContent: 'print("Hello, World!")',
+      );
+    } else {
+      newProject = await _projectRepo.createProject(
+        title: name,
+        projectType: ProjectType.web,
+        htmlContent: '<!DOCTYPE html>\\n<html>\\n<head>\\n  <title>My Web Project</title>\\n</head>\\n<body>\\n  <h1>Hello World</h1>\\n  <p>Edit the HTML, CSS, and JavaScript tabs, then press Run.</p>\\n</body>\\n</html>',
+        cssContent: 'body {\\n  font-family: sans-serif;\\n  padding: 20px;\\n}',
+        jsContent: 'console.log("Hello from JavaScript!");',
+      );
+    }
+
+    widget.onProjectCreated(newProject);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E2329),
+      title: const Text('New Project', style: TextStyle(color: Colors.white)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _nameController,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              labelText: 'Project Name',
+              labelStyle: const TextStyle(color: Colors.grey),
+              errorText: _errorMessage,
+              enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
+              focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00E5FF))),
+            ),
+          ),
+          const SizedBox(height: 24),
+          const Text('Project Type', style: TextStyle(color: Colors.grey, fontSize: 12)),
+          const SizedBox(height: 8),
+          SegmentedButton<ProjectType>(
+            segments: const [
+              ButtonSegment<ProjectType>(
+                value: ProjectType.python,
+                label: Text('Python'),
+                icon: Icon(Icons.code),
+              ),
+              ButtonSegment<ProjectType>(
+                value: ProjectType.web,
+                label: Text('Web'),
+                icon: Icon(Icons.language),
+              ),
+            ],
+            selected: <ProjectType>{_selectedType},
+            onSelectionChanged: (Set<ProjectType> newSelection) {
+              setState(() {
+                _selectedType = newSelection.first;
+              });
+            },
+            style: SegmentedButton.styleFrom(
+              selectedBackgroundColor: const Color(0xFF00E5FF).withAlpha(40),
+              selectedForegroundColor: const Color(0xFF00E5FF),
+              foregroundColor: Colors.grey,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+        ),
+        TextButton(
+          onPressed: _handleCreate,
+          child: const Text('Create', style: TextStyle(color: Color(0xFF00E5FF))),
+        ),
+      ],
+    );
+  }
+}
