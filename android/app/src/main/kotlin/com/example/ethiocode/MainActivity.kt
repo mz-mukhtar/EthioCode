@@ -146,9 +146,9 @@ class MainActivity : FlutterActivity() {
             )
 
             // Decode the returned Python dict into Kotlin types.
-            val stdout = pyResult["stdout"]?.toString() ?: ""
-            val stderr = pyResult["stderr"]?.toString() ?: ""
-            val hasError = pyResult["error"]?.toBoolean() ?: false
+            val stdout = pyResult.callAttr("get", "stdout")?.toString() ?: ""
+            val stderr = pyResult.callAttr("get", "stderr")?.toString() ?: ""
+            val hasError = pyResult.callAttr("get", "error")?.toBoolean() ?: false
 
             val responseMap = mapOf(
                 "stdout" to stdout,
