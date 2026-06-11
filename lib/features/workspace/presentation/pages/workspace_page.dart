@@ -48,6 +48,16 @@ const double _kMaxSplitRatio     = 0.85;
 const double _kDefaultSplitRatio = 0.60;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WorkspacePanel
+// ─────────────────────────────────────────────────────────────────────────────
+enum WorkspacePanel {
+  editor,
+  output,
+  console,
+  preview,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // WorkspacePage
 // ─────────────────────────────────────────────────────────────────────────────
 class WorkspacePage extends StatefulWidget {
@@ -72,6 +82,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   bool _isLoading = true;
   String? _startupError;
   String _activeWebTab = 'html';
+  WorkspacePanel _selectedPanel = WorkspacePanel.editor;
 
   // ── Split-view ────────────────────────────────────────────────────────────
   final ValueNotifier<double> _splitRatio =
@@ -138,6 +149,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
     );
 
     _activeWebTab = await _sessionManager.getLastWebTab();
+    
+    final lastPanelStr = await _sessionManager.getLastWorkspacePanel();
+    if (lastPanelStr != null) {
+      _selectedPanel = WorkspacePanel.values.firstWhere(
+        (e) => e.name == lastPanelStr,
+        orElse: () => WorkspacePanel.editor,
+      );
+    }
+
     await _openProject(p);
   }
 
@@ -152,6 +172,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
     await _projectRepo.updateProject(project);
     await _sessionManager.setLastProjectId(project.id);
     
+    // Fallback panel if invalid
+    if (project.projectType == ProjectType.python &&
+        (_selectedPanel == WorkspacePanel.console || _selectedPanel == WorkspacePanel.preview)) {
+      _selectedPanel = WorkspacePanel.editor;
+    } else if (project.projectType == ProjectType.web && _selectedPanel == WorkspacePanel.output) {
+      _selectedPanel = WorkspacePanel.editor;
+    }
+
     if (project.projectType == ProjectType.web) {
       if (_activeWebTab == 'html') {
         _controller.text = project.htmlContent;
@@ -241,6 +269,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // Unfocus so the keyboard doesn't interfere with the scrollable output.
     _focusNode.unfocus();
 
+    final isMobileLayout = MediaQuery.of(context).size.width < 700;
+
     // Save project and capture snapshot BEFORE execution
     await _saveCodeToDb();
 
@@ -270,6 +300,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
         activeTab:  OutputTab.preview,
         isRunning:  false,
       );
+
+      if (isMobileLayout) {
+        setState(() {
+          _selectedPanel = WorkspacePanel.preview;
+        });
+        _sessionManager.setLastWorkspacePanel(_selectedPanel.name);
+      }
       return;
     }
 
@@ -295,6 +332,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
           ? OutputTab.errors
           : OutputTab.output,
     );
+
+    if (isMobileLayout) {
+      setState(() {
+        _selectedPanel = WorkspacePanel.output;
+      });
+      _sessionManager.setLastWorkspacePanel(_selectedPanel.name);
+    }
   }
 
   Future<void> _handleStop() async {
@@ -374,66 +418,151 @@ class _WorkspacePageState extends State<WorkspacePage> {
       statusBarIconBrightness: Brightness.light,
     ));
 
+    final isMobileLayout = MediaQuery.of(context).size.width < 700;
+
     return Scaffold(
       resizeToAvoidBottomInset: true,
       backgroundColor: const Color(0xFF0D1117),
       appBar: _buildAppBar(),
       body: Column(
         children: [
-          // ── Split-view ────────────────────────────────────────────────────
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final total = constraints.maxHeight;
-                return ValueListenableBuilder<double>(
-                  valueListenable: _splitRatio,
-                  builder: (context, ratio, _) {
-                    final editorH =
-                        (total * ratio - _kDividerHeight / 2).clamp(0.0, total);
-                    final outputH =
-                        (total * (1 - ratio) - _kDividerHeight / 2)
-                            .clamp(0.0, total);
-
-                    return Column(
-                      children: [
-                        SizedBox(
-                          height: editorH,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (_activeProject?.projectType == ProjectType.web)
-                                _buildWebTabs(),
-                              Expanded(
-                                child: CodeEditor(
-                                  controller: _controller,
-                                  focusNode:  _focusNode,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        _buildDragHandle(total),
-                        SizedBox(
-                          height: outputH,
-                          child: OutputPane(
-                            stateNotifier: _outputState,
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                );
-              },
-            ),
+            child: isMobileLayout ? _buildMobileWorkspace() : _buildDesktopWorkspace(),
           ),
-
           // ── Sticky custom keyboard ────────────────────────────────────────
-          CustomCodingKeyboard(
-            controller: _controller,
-            focusNode:  _focusNode,
-          ),
+          if (!isMobileLayout || _selectedPanel == WorkspacePanel.editor)
+            CustomCodingKeyboard(
+              controller: _controller,
+              focusNode:  _focusNode,
+            ),
         ],
       ),
+      bottomNavigationBar: isMobileLayout ? _buildBottomNavigationBar() : null,
+    );
+  }
+
+  Widget _buildDesktopWorkspace() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final total = constraints.maxHeight;
+        return ValueListenableBuilder<double>(
+          valueListenable: _splitRatio,
+          builder: (context, ratio, _) {
+            final editorH =
+                (total * ratio - _kDividerHeight / 2).clamp(0.0, total);
+            final outputH =
+                (total * (1 - ratio) - _kDividerHeight / 2)
+                    .clamp(0.0, total);
+
+            return Column(
+              children: [
+                SizedBox(
+                  height: editorH,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (_activeProject?.projectType == ProjectType.web)
+                        _buildWebTabs(),
+                      Expanded(
+                        child: CodeEditor(
+                          controller: _controller,
+                          focusNode:  _focusNode,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _buildDragHandle(total),
+                SizedBox(
+                  height: outputH,
+                  child: OutputPane(
+                    stateNotifier: _outputState,
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildMobileWorkspace() {
+    switch (_selectedPanel) {
+      case WorkspacePanel.editor:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_activeProject?.projectType == ProjectType.web) _buildWebTabs(),
+            Expanded(
+              child: CodeEditor(
+                controller: _controller,
+                focusNode:  _focusNode,
+              ),
+            ),
+          ],
+        );
+      case WorkspacePanel.output:
+      case WorkspacePanel.console:
+      case WorkspacePanel.preview:
+        return OutputPane(stateNotifier: _outputState);
+    }
+  }
+
+  Widget _buildBottomNavigationBar() {
+    final isPython = _activeProject?.projectType == ProjectType.python;
+    
+    int currentIndex = 0;
+    if (isPython) {
+      currentIndex = _selectedPanel == WorkspacePanel.editor ? 0 : 1;
+    } else {
+      if (_selectedPanel == WorkspacePanel.editor) {
+        currentIndex = 0;
+      } else if (_selectedPanel == WorkspacePanel.console) {
+        currentIndex = 1;
+      } else if (_selectedPanel == WorkspacePanel.preview) {
+        currentIndex = 2;
+      } else {
+        currentIndex = 0; // fallback
+      }
+    }
+
+    return BottomNavigationBar(
+      backgroundColor: const Color(0xFF161B22),
+      selectedItemColor: const Color(0xFF00E5FF),
+      unselectedItemColor: Colors.grey,
+      currentIndex: currentIndex,
+      onTap: (index) {
+        setState(() {
+          if (isPython) {
+            _selectedPanel = index == 0 ? WorkspacePanel.editor : WorkspacePanel.output;
+            if (_selectedPanel == WorkspacePanel.output) {
+              _outputState.value = _outputState.value.copyWith(activeTab: OutputTab.output);
+            }
+          } else {
+            if (index == 0) {
+              _selectedPanel = WorkspacePanel.editor;
+            } else if (index == 1) {
+              _selectedPanel = WorkspacePanel.console;
+              _outputState.value = _outputState.value.copyWith(activeTab: OutputTab.output);
+            } else if (index == 2) {
+              _selectedPanel = WorkspacePanel.preview;
+              _outputState.value = _outputState.value.copyWith(activeTab: OutputTab.preview);
+            }
+          }
+        });
+        _sessionManager.setLastWorkspacePanel(_selectedPanel.name);
+      },
+      items: isPython
+          ? const [
+              BottomNavigationBarItem(icon: Icon(Icons.code), label: 'Editor'),
+              BottomNavigationBarItem(icon: Icon(Icons.terminal), label: 'Output'),
+            ]
+          : const [
+              BottomNavigationBarItem(icon: Icon(Icons.code), label: 'Editor'),
+              BottomNavigationBarItem(icon: Icon(Icons.terminal), label: 'Console'),
+              BottomNavigationBarItem(icon: Icon(Icons.web), label: 'Preview'),
+            ],
     );
   }
 

@@ -13,6 +13,7 @@ class SessionManager {
   static const String _keyLastCursorPos = 'last_cursor_position';
   static const String _keyLastOpenedAt  = 'last_opened_timestamp';
   static const String _keyLastWebTab    = 'last_web_tab';
+  static const String _keyLastPanel     = 'last_workspace_panel';
 
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
 
@@ -90,5 +91,15 @@ class SessionManager {
   /// Save the last active web tab.
   Future<void> setLastWebTab(String tab) async {
     await _setString(_keyLastWebTab, tab);
+  }
+
+  /// The last active workspace panel (editor, output, console, preview).
+  Future<String?> getLastWorkspacePanel() async {
+    return _getString(_keyLastPanel);
+  }
+
+  /// Save the last active workspace panel.
+  Future<void> setLastWorkspacePanel(String panel) async {
+    await _setString(_keyLastPanel, panel);
   }
 }
