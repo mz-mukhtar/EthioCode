@@ -24,6 +24,7 @@ dependencies:
   sqflite_common_ffi: ^2.4.1
   file_picker: 10.3.8
   archive: ^4.0.9
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:

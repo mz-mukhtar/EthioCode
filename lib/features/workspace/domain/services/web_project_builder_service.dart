@@ -10,6 +10,34 @@ class WebProjectBuilderService {
     final css = project.cssContent.trim();
     final js = project.jsContent.trim();
 
+    const String basePreviewCss = '''
+html, body {
+  background: #ffffff;
+  color: #111111;
+  margin: 0;
+  min-height: 100%;
+}
+body {
+  padding: 20px;
+  box-sizing: border-box;
+}
+''';
+
+    // 1. Safe Fragment Handling
+    final htmlLower = html.toLowerCase();
+    if (!htmlLower.contains('<html') && !htmlLower.contains('<body')) {
+      html = '''<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+$html
+</body>
+</html>''';
+    }
+
     const consoleOverride = '''
 <script>
 (function() {
@@ -51,8 +79,19 @@ class WebProjectBuilderService {
       html = consoleOverride + html;
     }
 
+    // 3. Inject Base CSS
+    const baseStyleBlock = '\n<style id="mobile-ide-preview-base-style">\n$basePreviewCss\n</style>\n';
+    if (html.contains('</head>')) {
+      html = html.replaceFirst('</head>', '$baseStyleBlock</head>');
+    } else if (html.contains('<body>')) {
+      html = html.replaceFirst('<body>', '<body>$baseStyleBlock');
+    } else {
+      html = baseStyleBlock + html;
+    }
+
+    // 4. Inject User CSS
     if (css.isNotEmpty) {
-      final styleBlock = '\n<style>\n$css\n</style>\n';
+      final styleBlock = '\n<style id="mobile-ide-user-style">\n$css\n</style>\n';
       if (html.contains('</head>')) {
         html = html.replaceFirst('</head>', '$styleBlock</head>');
       } else {

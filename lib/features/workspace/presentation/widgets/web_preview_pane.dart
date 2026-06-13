@@ -20,8 +20,8 @@ import 'package:webview_flutter/webview_flutter.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
-const Color _kPaneBg    = Color(0xFF0A0E14);
-const Color _kEmptyFg   = Color(0xFF484F58);
+const Color _kPaneBg    = Color(0xFFFFFFFF); // Light background for preview
+const Color _kEmptyFg   = Color(0xFF484F58); // Darker grey for light bg readability
 const Color _kActiveFg  = Color(0xFF00E5FF);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,7 +108,7 @@ class _WebPreviewPaneState extends State<WebPreviewPane> {
           widget.onConsoleMessage?.call(msg, isError);
         },
       )
-      // ── Background colour matches the IDE dark theme ──────────────────────
+      // ── Background colour matches the default white theme ─────────────────
       ..setBackgroundColor(_kPaneBg)
       // ── Navigation delegate: block all non-data-URI navigations ──────────
       ..setNavigationDelegate(
@@ -122,11 +122,11 @@ class _WebPreviewPaneState extends State<WebPreviewPane> {
           onWebResourceError: (WebResourceError error) {
             // Ignore errors on blank / initial load.
             if (error.errorCode == -1) return;
+            debugPrint('WebView error ${error.errorCode}: ${error.description}');
             if (mounted) {
               setState(() {
                 _isLoading = false;
-                _navigationError =
-                    'WebView error ${error.errorCode}: ${error.description}';
+                _navigationError = 'Failed to load web preview.';
               });
             }
           },
@@ -206,22 +206,13 @@ class _WebPreviewPaneState extends State<WebPreviewPane> {
             color: _kEmptyFg.withAlpha(140),
           ),
           const SizedBox(height: 10),
-          Text(
-            'HTML preview will appear here',
+          const Text(
+            'Run your web project to see the preview.',
             style: TextStyle(
               fontFamily:    'monospace',
               fontSize:      12.0,
-              color:         _kEmptyFg.withAlpha(200),
+              color:         _kEmptyFg,
               letterSpacing: 0.2,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Write HTML and press ▶ Run',
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize:   10.5,
-              color:      _kEmptyFg.withAlpha(130),
             ),
           ),
         ],
@@ -232,7 +223,8 @@ class _WebPreviewPaneState extends State<WebPreviewPane> {
   Widget _buildLoadingOverlay() {
     return const Positioned.fill(
       child: ColoredBox(
-        color: Color(0x880A0E14),
+        color: Color(0x33FFFFFF), // lighter overlay
+
         child: Center(
           child: SizedBox(
             width:  24,
@@ -253,7 +245,7 @@ class _WebPreviewPaneState extends State<WebPreviewPane> {
       left: 0,
       right: 0,
       child: Container(
-        color:   const Color(0xCC1A0A0A),
+        color:   const Color(0xFFFFEBEB), // Light red bg for visibility
         padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
         child: Text(
           message,
@@ -261,8 +253,8 @@ class _WebPreviewPaneState extends State<WebPreviewPane> {
           overflow:  TextOverflow.ellipsis,
           style: const TextStyle(
             fontFamily: 'monospace',
-            fontSize:   11.0,
-            color:      Color(0xFFFF6B6B),
+            fontSize:   12.0,
+            color:      Color(0xFFD32F2F), // Dark red text
           ),
         ),
       ),

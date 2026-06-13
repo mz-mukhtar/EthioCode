@@ -32,6 +32,7 @@ import '../widgets/syntax_highlighter.dart';
 import '../../domain/services/python_runner_service.dart';
 import '../../domain/services/web_project_builder_service.dart';
 import '../../../settings/presentation/pages/settings_page.dart';
+import '../../../../main.dart';
 import '../../../projects/domain/models/project.dart';
 import '../../../projects/domain/models/project_type.dart';
 import '../../../projects/data/repositories/project_repository.dart';
@@ -434,6 +435,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
             CustomCodingKeyboard(
               controller: _controller,
               focusNode:  _focusNode,
+              tabSize:    globalSettingsController.settings.tabSize,
             ),
         ],
       ),
@@ -467,6 +469,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
                         child: CodeEditor(
                           controller: _controller,
                           focusNode:  _focusNode,
+                          fontSize:   globalSettingsController.settings.editorFontSize,
                         ),
                       ),
                     ],
@@ -477,6 +480,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
                   height: outputH,
                   child: OutputPane(
                     stateNotifier: _outputState,
+                    fontSize:      globalSettingsController.settings.outputFontSize,
                   ),
                 ),
               ],
@@ -498,6 +502,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
               child: CodeEditor(
                 controller: _controller,
                 focusNode:  _focusNode,
+                fontSize:   globalSettingsController.settings.editorFontSize,
               ),
             ),
           ],
@@ -505,7 +510,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
       case WorkspacePanel.output:
       case WorkspacePanel.console:
       case WorkspacePanel.preview:
-        return OutputPane(stateNotifier: _outputState);
+        return OutputPane(
+          stateNotifier: _outputState,
+          fontSize:      globalSettingsController.settings.outputFontSize,
+        );
     }
   }
 

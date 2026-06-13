@@ -55,8 +55,13 @@ const Color _kFgError   = Color(0xFFFF6B6B);
 // ─────────────────────────────────────────────────────────────────────────────
 class OutputPane extends StatefulWidget {
   final ValueNotifier<OutputPaneState> stateNotifier;
+  final double fontSize;
 
-  const OutputPane({super.key, required this.stateNotifier});
+  const OutputPane({
+    super.key,
+    required this.stateNotifier,
+    this.fontSize = 14.0,
+  });
 
   @override
   State<OutputPane> createState() => _OutputPaneState();
@@ -114,12 +119,14 @@ class _OutputPaneState extends State<OutputPane> {
           result:    state.result,
           isRunning: state.isRunning,
           showErrors: false,
+          fontSize:  widget.fontSize,
         );
       case OutputTab.errors:
         return _OutputBody(
           result:    state.result,
           isRunning: state.isRunning,
           showErrors: true,
+          fontSize:  widget.fontSize,
         );
       case OutputTab.preview:
         return WebPreviewPane(
@@ -304,11 +311,13 @@ class _OutputBody extends StatefulWidget {
   final ExecutionResult? result;
   final bool isRunning;
   final bool showErrors;
+  final double fontSize;
 
   const _OutputBody({
     required this.result,
     required this.isRunning,
     required this.showErrors,
+    required this.fontSize,
   });
 
   @override
@@ -367,7 +376,7 @@ class _OutputBodyState extends State<_OutputBody> {
           text,
           style: TextStyle(
             fontFamily:    'monospace',
-            fontSize:      12.5,
+            fontSize:      widget.fontSize,
             height:        1.55,
             color:         widget.showErrors ? _kFgError : _kFgNormal,
             letterSpacing: 0.2,

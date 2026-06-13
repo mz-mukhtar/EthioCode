@@ -65,10 +65,14 @@ class CustomCodingKeyboard extends StatelessWidget {
   /// from collapsing.
   final FocusNode focusNode;
 
+  /// The number of spaces to insert when the Tab key is pressed.
+  final int tabSize;
+
   const CustomCodingKeyboard({
     super.key,
     required this.controller,
     required this.focusNode,
+    this.tabSize = 4,
   });
 
   // ── text insertion logic ──────────────────────────────────────────────────
@@ -138,9 +142,13 @@ class CustomCodingKeyboard extends StatelessWidget {
           separatorBuilder: (_, __) => const SizedBox(width: 5.0),
           itemBuilder: (context, index) {
             final key = _keys[index];
+            final insertString = (key.label == 'Tab')
+                ? List.filled(tabSize, ' ').join('')
+                : key.insert;
+                
             return _KeyButton(
               keyDef: key,
-              onTap:  () => _insertAt(key.insert),
+              onTap:  () => _insertAt(insertString),
             );
           },
         ),

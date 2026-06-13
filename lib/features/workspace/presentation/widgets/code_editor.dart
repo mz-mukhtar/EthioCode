@@ -13,9 +13,7 @@ import 'syntax_highlighter.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
-const double _kFontSize   = 14.0;
 const double _kLineHeight = 1.5;
-const double _kLinePixels = _kFontSize * _kLineHeight; // ≈ 21 px per line
 const double _kGutterWidth = 52.0;
 const Color  _kGutterBg  = Color(0xFF161B22);
 const Color  _kEditorBg  = Color(0xFF0D1117);
@@ -35,10 +33,14 @@ class CodeEditor extends StatefulWidget {
   /// programmatically (e.g. after a keyboard key tap).
   final FocusNode focusNode;
 
+  /// Font size for the text field.
+  final double fontSize;
+
   const CodeEditor({
     super.key,
     required this.controller,
     required this.focusNode,
+    this.fontSize = 16.0,
   });
 
   @override
@@ -151,7 +153,7 @@ class _CodeEditorState extends State<CodeEditor> {
           physics: const NeverScrollableScrollPhysics(),
           padding: const EdgeInsets.only(top: 12.0, bottom: 12.0),
           itemCount: _lineCount,
-          itemExtent: _kLinePixels,
+          itemExtent: widget.fontSize * _kLineHeight,
           itemBuilder: (context, index) {
             final lineNum   = index + 1;
             final isActive  = lineNum == _activeLine;
@@ -163,8 +165,8 @@ class _CodeEditorState extends State<CodeEditor> {
                   '$lineNum',
                   style: TextStyle(
                     fontFamily: 'monospace',
-                    fontSize:   _kFontSize - 1,
-                    height:     1.0,
+                    fontSize:   widget.fontSize,
+                    height:     _kLineHeight,
                     color:      isActive ? _kGutterFgActive : _kGutterFg,
                     fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
                   ),
@@ -189,11 +191,11 @@ class _CodeEditorState extends State<CodeEditor> {
       textInputAction: TextInputAction.newline,
       autocorrect:  false,
       enableSuggestions: false,
-      style: const TextStyle(
+      style: TextStyle(
         fontFamily:    'monospace',
-        fontSize:      _kFontSize,
+        fontSize:      widget.fontSize,
         height:        _kLineHeight,
-        color:         Color(0xFFD4D4D4),
+        color:         const Color(0xFFD4D4D4),
         letterSpacing: 0.3,
       ),
       cursorColor:  _kCursorColor,
